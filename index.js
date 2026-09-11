@@ -123,6 +123,23 @@ function sourceNameMatches(filename, requested) {
   );
 }
 
+function skillFileNameMatches(filename, requested) {
+  return filename === requested || filename === `${requested}.md`;
+}
+
+function hasSkillFile(directory) {
+  const skillPath = join(directory, "SKILL.md");
+  try {
+    return statSync(skillPath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function addSkillMatch(matches, path) {
+  if (hasSkillFile(path)) addMatch(matches, path);
+}
+
 /**
  * Resolve an extension name to the path Pi expects.
  *
@@ -200,10 +217,74 @@ export function resolveExtension(requested, agentDir = process.env.PI_AGENT_DIR 
   );
 }
 
+/**
+ * Resolve a skill name to a file or skill directory accepted by Pi.
+ * Global skills are searched first, followed by skills shipped alongside
+ * extensions in npm, git, and the local extensions directory.
+ */
+export function resolveSkill(requested, agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR) {
+  if (!requested) {
+    throw new Error("--skill requires a skill name or path");
+  }
+
+  // Explicit files and directories remain valid, including paths outside the
+  // agent directory.
+  if (existsSync(requested)) return requested;
+
+  const matches = [];
+  const globalSkills = join(agentDir, "skills");
+
+  if (existsSync(globalSkills)) {
+    for (const entry of walkEntries(globalSkills)) {
+      if (entry.isDirectory) {
+        if (entry.name === requested) addSkillMatch(matches, entry.path);
+      } else if (skillFileNameMatches(entry.name, requested)) {
+        addMatch(matches, entry.path);
+      }
+    }
+  }
+
+  const extensionRoots = [
+    join(agentDir, "npm", "node_modules"),
+    join(agentDir, "git"),
+    join(agentDir, "extensions"),
+  ];
+
+  for (const root of extensionRoots) {
+    if (!existsSync(root)) continue;
+
+    // SKILL.md is the marker for a skill directory, so scanning extension
+    // trees does not mistake an ordinary source directory for a skill.
+    for (const entry of walkEntries(root)) {
+      if (entry.isDirectory) {
+        if (entry.name === requested) addSkillMatch(matches, entry.path);
+      } else if (skillFileNameMatches(entry.name, requested)) {
+        addMatch(matches, entry.path);
+      }
+    }
+  }
+
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) {
+    throw new Error(
+      `skill not found: ${requested}\n` +
+        `searched ${agentDir}/skills and skills inside ${agentDir}/npm/node_modules, ${agentDir}/git, and ${agentDir}/extensions`,
+    );
+  }
+
+  throw new Error(
+    `skill name is ambiguous: ${requested}\n` +
+      matches.map((match) => `  ${match}`).join("\n") +
+      "\nuse an explicit skill path to disambiguate",
+  );
+}
+
 export function parseArguments(argv) {
   const piArguments = [];
   let parseOptions = true;
   let useDefaults = true;
+  let hasExtension = false;
+  let hasSkill = false;
   let dryRun = false;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -235,6 +316,7 @@ export function parseArguments(argv) {
         throw new Error(`${argument} requires an extension name or path`);
       }
       piArguments.push("--extension", requested);
+      hasExtension = true;
       index += 1;
       continue;
     }
@@ -243,18 +325,45 @@ export function parseArguments(argv) {
       const requested = argument.slice("--extension=".length);
       if (!requested) throw new Error("--extension requires an extension name or path");
       piArguments.push("--extension", requested);
+      hasExtension = true;
       continue;
     }
 
     if (parseOptions && argument.startsWith("-e") && argument.length > 2) {
       piArguments.push("--extension", argument.slice(2));
+      hasExtension = true;
+      continue;
+    }
+
+    if (parseOptions && (argument === "--skill" || argument === "-s")) {
+      const requested = argv[index + 1];
+      if (requested === undefined) {
+        throw new Error(`${argument} requires a skill name or path`);
+      }
+      piArguments.push("--skill", requested);
+      hasSkill = true;
+      index += 1;
+      continue;
+    }
+
+    if (parseOptions && argument.startsWith("--skill=")) {
+      const requested = argument.slice("--skill=".length);
+      if (!requested) throw new Error("--skill requires a skill name or path");
+      piArguments.push("--skill", requested);
+      hasSkill = true;
+      continue;
+    }
+
+    if (parseOptions && argument.startsWith("-s") && argument.length > 2) {
+      piArguments.push("--skill", argument.slice(2));
+      hasSkill = true;
       continue;
     }
 
     piArguments.push(argument);
   }
 
-  return { piArguments, useDefaults, dryRun };
+  return { piArguments, useDefaults, hasExtension, hasSkill, dryRun };
 }
 
 export function buildPiArguments(parsed, agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR) {
@@ -267,14 +376,21 @@ export function buildPiArguments(parsed, agentDir = process.env.PI_AGENT_DIR || 
     if (argument === "--extension") {
       resolved.push(resolveExtension(parsed.piArguments[index + 1], agentDir));
       index += 1;
-    } else if (argument === "--extension=") {
+    } else if (argument === "--skill") {
+      resolved.push(resolveSkill(parsed.piArguments[index + 1], agentDir));
+      index += 1;
+    } else if (argument === "--extension=" || argument === "--skill=") {
       // parseArguments normalizes equals syntax, but keep this guard for
       // callers using buildPiArguments directly.
-      throw new Error("--extension requires an extension name or path");
+      throw new Error(`${argument.slice(0, -1)} requires a name or path`);
     }
   }
 
-  return parsed.useDefaults ? ["-ns", "-ne", ...resolved] : resolved;
+  if (!parsed.useDefaults) return resolved;
+  // Explicit skills disable skill discovery. Keep extension discovery enabled
+  // unless an extension was also explicitly requested.
+  if (parsed.hasSkill && !parsed.hasExtension) return ["-ns", ...resolved];
+  return ["-ns", "-ne", ...resolved];
 }
 
 function shellQuote(argument) {
@@ -284,14 +400,16 @@ function shellQuote(argument) {
 
 function printHelp() {
   process.stdout.write(`Usage: pi-cli [options] [pi-options/messages...]\n\n`);
-  process.stdout.write(`Runs pi with -ns -ne by default and resolves extension names.\n\n`);
+  process.stdout.write(`Runs pi with explicit resources and passes normal Pi arguments through.\n`);
+  process.stdout.write(`It adds -ns for skills, and -ns -ne for extensions, by default.\n\n`);
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  -e, --extension <name|path>  Load an extension (repeatable)\n`);
-  process.stdout.write(`  --no-defaults                Do not add -ns -ne\n`);
+  process.stdout.write(`  -s, --skill <name|path>      Load a skill (repeatable)\n`);
+  process.stdout.write(`  --no-defaults                Do not add default discovery flags\n`);
   process.stdout.write(`  --allow-discovery            Alias for --no-defaults\n`);
   process.stdout.write(`  --dry-run                    Print the command without running pi\n`);
   process.stdout.write(`  -h, --help                   Show this help\n\n`);
-  process.stdout.write(`Extension search roots:\n`);
+  process.stdout.write(`Extension and skill search roots:\n`);
   process.stdout.write(`  $PI_AGENT_DIR/npm/node_modules (or ~/.pi/agent)\n`);
   process.stdout.write(`  $PI_AGENT_DIR/git\n`);
   process.stdout.write(`  $PI_AGENT_DIR/extensions\n`);
