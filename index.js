@@ -1,0 +1,350 @@
+#!/usr/bin/env node
+
+import { spawn } from "node:child_process";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import { fileURLToPath } from "node:url";
+import { extname, join, resolve } from "node:path";
+import { homedir } from "node:os";
+
+const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs"]);
+const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git"]);
+
+/**
+ * Walk a directory without following dependency trees or git metadata.
+ * `maxDepth` is measured from `root` (root itself is depth zero).
+ */
+function* walkEntries(root, { maxDepth = Infinity, skipDirectories = SKIPPED_DIRECTORIES } = {}) {
+  const visited = new Set();
+
+  function* visit(directory, depth) {
+    let realDirectory;
+    try {
+      realDirectory = realpathSync(directory);
+    } catch {
+      return;
+    }
+
+    if (visited.has(realDirectory)) return;
+    visited.add(realDirectory);
+
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      let isDirectory = entry.isDirectory();
+
+      // npm installations made with links (for example pnpm) still need to
+      // be discoverable, but broken links should simply be ignored.
+      if (entry.isSymbolicLink()) {
+        try {
+          isDirectory = statSync(path).isDirectory();
+        } catch {
+          continue;
+        }
+      }
+
+      const entryDepth = depth + 1;
+      yield { path, name: entry.name, isDirectory, depth: entryDepth };
+
+      if (
+        isDirectory &&
+        entryDepth < maxDepth &&
+        !skipDirectories.has(entry.name)
+      ) {
+        yield* visit(path, entryDepth);
+      }
+    }
+  }
+
+  if (existsSync(root)) yield* visit(root, 0);
+}
+
+function readPackageJson(directory) {
+  const packagePath = join(directory, "package.json");
+  try {
+    return JSON.parse(readFileSync(packagePath, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+function isPiPackage(packageJson) {
+  return Boolean(packageJson && packageJson.pi);
+}
+
+function hasExtensionSource(directory) {
+  for (const entry of walkEntries(directory)) {
+    if (!entry.isDirectory && SOURCE_EXTENSIONS.has(extname(entry.name))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function looksLikeExtensionDirectory(directory) {
+  const packageJson = readPackageJson(directory);
+  return isPiPackage(packageJson) || hasExtensionSource(directory);
+}
+
+function packageNameMatches(packageJson, requested) {
+  if (!packageJson || typeof packageJson.name !== "string") return false;
+  return packageJson.name === requested || packageJson.name.split("/").pop() === requested;
+}
+
+function canonicalPath(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+function addMatch(matches, path) {
+  const candidate = canonicalPath(path);
+  if (!matches.includes(candidate)) matches.push(candidate);
+}
+
+function sourceNameMatches(filename, requested) {
+  return (
+    filename === requested ||
+    [...SOURCE_EXTENSIONS].some((extension) => filename === `${requested}${extension}`)
+  );
+}
+
+/**
+ * Resolve an extension name to the path Pi expects.
+ *
+ * Search order is npm packages, git checkouts, then local extensions. Package
+ * metadata is used for scoped packages and repositories whose folder name is
+ * different from their package name.
+ */
+export function resolveExtension(requested, agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR) {
+  if (!requested) {
+    throw new Error("--extension requires an extension name or path");
+  }
+
+  // Explicit paths remain valid, including paths outside ~/.pi/agent.
+  if (existsSync(requested)) return requested;
+
+  const roots = [
+    { path: join(agentDir, "npm", "node_modules"), kind: "npm" },
+    { path: join(agentDir, "git"), kind: "git" },
+    { path: join(agentDir, "extensions"), kind: "extensions" },
+  ];
+  const matches = [];
+
+  for (const root of roots) {
+    if (!existsSync(root.path)) continue;
+
+    if (root.kind === "npm") {
+      // Package roots are at depth one, or depth two for scoped packages.
+      for (const entry of walkEntries(root.path, { maxDepth: 2, skipDirectories: new Set() })) {
+        if (
+          entry.isDirectory &&
+          entry.name === requested &&
+          looksLikeExtensionDirectory(entry.path)
+        ) {
+          addMatch(matches, entry.path);
+        }
+      }
+    } else {
+      // Git and local extension folders may be nested. Source files are also
+      // valid -- e.g. extensions/orca-prefill.ts.
+      for (const entry of walkEntries(root.path)) {
+        if (entry.isDirectory) {
+          if (entry.name === requested && looksLikeExtensionDirectory(entry.path)) {
+            addMatch(matches, entry.path);
+          }
+        } else if (sourceNameMatches(entry.name, requested)) {
+          addMatch(matches, entry.path);
+        }
+      }
+    }
+
+    // A package's directory name is not always its package name (especially
+    // for scoped npm packages and extensions checked out from git).
+    const packageDepth = root.kind === "npm" ? 3 : Infinity;
+    for (const entry of walkEntries(root.path, { maxDepth: packageDepth })) {
+      if (entry.isDirectory || entry.name !== "package.json") continue;
+      const packageJson = readPackageJson(resolve(entry.path, ".."));
+      if (packageNameMatches(packageJson, requested) && isPiPackage(packageJson)) {
+        addMatch(matches, resolve(entry.path, ".."));
+      }
+    }
+  }
+
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) {
+    throw new Error(
+      `extension not found: ${requested}\n` +
+        `searched ${agentDir}/npm/node_modules, ${agentDir}/git, and ${agentDir}/extensions`,
+    );
+  }
+
+  throw new Error(
+    `extension name is ambiguous: ${requested}\n` +
+      matches.map((match) => `  ${match}`).join("\n") +
+      "\nuse an explicit extension path to disambiguate",
+  );
+}
+
+export function parseArguments(argv) {
+  const piArguments = [];
+  let parseOptions = true;
+  let useDefaults = true;
+  let dryRun = false;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+
+    if (parseOptions && argument === "--") {
+      parseOptions = false;
+      piArguments.push(argument);
+      continue;
+    }
+
+    if (parseOptions && (argument === "--help" || argument === "-h")) {
+      return { help: true };
+    }
+
+    if (parseOptions && argument === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+
+    if (parseOptions && (argument === "--no-defaults" || argument === "--allow-discovery")) {
+      useDefaults = false;
+      continue;
+    }
+
+    if (parseOptions && (argument === "--extension" || argument === "-e")) {
+      const requested = argv[index + 1];
+      if (requested === undefined) {
+        throw new Error(`${argument} requires an extension name or path`);
+      }
+      piArguments.push("--extension", requested);
+      index += 1;
+      continue;
+    }
+
+    if (parseOptions && argument.startsWith("--extension=")) {
+      const requested = argument.slice("--extension=".length);
+      if (!requested) throw new Error("--extension requires an extension name or path");
+      piArguments.push("--extension", requested);
+      continue;
+    }
+
+    if (parseOptions && argument.startsWith("-e") && argument.length > 2) {
+      piArguments.push("--extension", argument.slice(2));
+      continue;
+    }
+
+    piArguments.push(argument);
+  }
+
+  return { piArguments, useDefaults, dryRun };
+}
+
+export function buildPiArguments(parsed, agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR) {
+  if (parsed.help) return [];
+
+  const resolved = [];
+  for (let index = 0; index < parsed.piArguments.length; index += 1) {
+    const argument = parsed.piArguments[index];
+    resolved.push(argument);
+    if (argument === "--extension") {
+      resolved.push(resolveExtension(parsed.piArguments[index + 1], agentDir));
+      index += 1;
+    } else if (argument === "--extension=") {
+      // parseArguments normalizes equals syntax, but keep this guard for
+      // callers using buildPiArguments directly.
+      throw new Error("--extension requires an extension name or path");
+    }
+  }
+
+  return parsed.useDefaults ? ["-ns", "-ne", ...resolved] : resolved;
+}
+
+function shellQuote(argument) {
+  if (/^[a-zA-Z0-9_./:@%+=,-]+$/.test(argument)) return argument;
+  return `'${argument.replaceAll("'", "'\\''")}'`;
+}
+
+function printHelp() {
+  process.stdout.write(`Usage: pi-cli [options] [pi-options/messages...]\n\n`);
+  process.stdout.write(`Runs pi with -ns -ne by default and resolves extension names.\n\n`);
+  process.stdout.write(`Options:\n`);
+  process.stdout.write(`  -e, --extension <name|path>  Load an extension (repeatable)\n`);
+  process.stdout.write(`  --no-defaults                Do not add -ns -ne\n`);
+  process.stdout.write(`  --allow-discovery            Alias for --no-defaults\n`);
+  process.stdout.write(`  --dry-run                    Print the command without running pi\n`);
+  process.stdout.write(`  -h, --help                   Show this help\n\n`);
+  process.stdout.write(`Extension search roots:\n`);
+  process.stdout.write(`  $PI_AGENT_DIR/npm/node_modules (or ~/.pi/agent)\n`);
+  process.stdout.write(`  $PI_AGENT_DIR/git\n`);
+  process.stdout.write(`  $PI_AGENT_DIR/extensions\n`);
+}
+
+export function main(argv = process.argv.slice(2)) {
+  let parsed;
+  try {
+    parsed = parseArguments(argv);
+    if (parsed.help) {
+      printHelp();
+      return 0;
+    }
+
+    const piArguments = buildPiArguments(parsed);
+    const piCommand = process.env.PI_BIN || "pi";
+
+    if (parsed.dryRun) {
+      process.stdout.write([piCommand, ...piArguments].map(shellQuote).join(" ") + "\n");
+      return 0;
+    }
+
+    const child = spawn(piCommand, piArguments, { stdio: "inherit" });
+    child.on("error", (error) => {
+      process.stderr.write(`pi-cli: unable to run ${piCommand}: ${error.message}\n`);
+      process.exitCode = 127;
+    });
+    child.on("exit", (code, signal) => {
+      if (signal) {
+        process.exitCode = 128;
+      } else {
+        process.exitCode = code ?? 1;
+      }
+    });
+    return undefined;
+  } catch (error) {
+    process.stderr.write(`pi-cli: ${error.message}\n`);
+    return 1;
+  }
+}
+
+let invokedPath = "";
+if (process.argv[1]) {
+  try {
+    invokedPath = realpathSync(process.argv[1]);
+  } catch {
+    // Importing the module from a non-file entry point should not execute it.
+  }
+}
+const modulePath = fileURLToPath(import.meta.url);
+if (invokedPath === modulePath) {
+  const result = main();
+  if (result !== undefined) process.exitCode = result;
+}
+
+export { DEFAULT_AGENT_DIR };
