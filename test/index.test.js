@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { buildPiArguments, parseArguments, resolveExtension, resolveSkill } from "../index.js";
+import {
+  buildPiArguments,
+  loadConfig,
+  parseArguments,
+  resolveExtension,
+  resolveSkill,
+  saveConfig,
+} from "../index.js";
 
 async function fixture() {
   const agentDir = await mkdtemp(join(tmpdir(), "pi-command-cli-"));
@@ -101,6 +108,26 @@ test("expands skill flags and only disables skill discovery", async () => {
     "--skill",
     join(agentDir, "npm", "node_modules", "pi-intercom", "skills", "pi-intercom"),
   ]);
+});
+
+test("saves raw resource names and imports exact or partial config names", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "pi-cli-configs.json");
+  const parsed = parseArguments(["-e", "pi-intercom", "-s", "playwright-cli"]);
+
+  saveConfig("searcher", parsed, configFile);
+  const file = JSON.parse(await readFile(configFile, "utf8"));
+  assert.deepEqual(file.configs.searcher.args, [
+    "--extension",
+    "pi-intercom",
+    "--skill",
+    "playwright-cli",
+  ]);
+
+  const loaded = loadConfig("search", configFile);
+  assert.deepEqual(loaded.piArguments, file.configs.searcher.args);
+  assert.equal(loaded.hasExtension, true);
+  assert.equal(loaded.hasSkill, true);
 });
 
 test("supports opting out of the default discovery flags", () => {

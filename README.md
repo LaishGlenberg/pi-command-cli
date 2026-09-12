@@ -39,6 +39,19 @@ Existing extension and skill paths continue to work. Use `--dry-run` to inspect
 the expanded command, and `--no-defaults` when Pi's normal discovery should
 stay enabled. Set `PI_BIN` to use a different Pi executable.
 
+Save named configurations in `~/.pi/agent/pi-cli-configs.json`:
+
+```bash
+pi-cli --save searcher -e pi-intercom -s playwright-cli
+pi-cli --import searcher
+# -i searcher is an alias for --import searcher
+```
+
+Configurations save the structured arguments—not a shell command string—so
+extension and skill names are resolved again when imported. Import searches
+exact names first, then unique partial matches. Use `PI_CLI_CONFIG_FILE` to
+choose a different config file.
+
 Install the command locally with:
 
 ```bash

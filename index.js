@@ -2,17 +2,22 @@
 
 import { spawn } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { extname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
+const CONFIG_FILENAME = "pi-cli-configs.json";
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs"]);
 const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git"]);
 
@@ -279,12 +284,110 @@ export function resolveSkill(requested, agentDir = process.env.PI_AGENT_DIR || D
   );
 }
 
+function configFilePath(configFile) {
+  const defaultFile = join(process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR, CONFIG_FILENAME);
+  return resolve(configFile || process.env.PI_CLI_CONFIG_FILE || defaultFile);
+}
+
+function validateConfigName(name) {
+  if (!name || name === "." || name === ".." || /[\\/\\0]/.test(name)) {
+    throw new Error("config name must be non-empty and cannot contain path separators");
+  }
+}
+
+function readConfigStore(configFile) {
+  if (!existsSync(configFile)) return { version: 1, configs: {} };
+
+  let store;
+  try {
+    store = JSON.parse(readFileSync(configFile, "utf8"));
+  } catch (error) {
+    throw new Error(`could not read config file ${configFile}: ${error.message}`);
+  }
+
+  if (!store || typeof store !== "object" || Array.isArray(store) ||
+      !store.configs || typeof store.configs !== "object" || Array.isArray(store.configs)) {
+    throw new Error(`invalid pi-cli config file: ${configFile}`);
+  }
+  return store;
+}
+
+function configEntryFromParsed(parsed) {
+  return {
+    args: parsed.piArguments,
+    useDefaults: parsed.useDefaults,
+    hasExtension: parsed.hasExtension,
+    hasSkill: parsed.hasSkill,
+  };
+}
+
+export function saveConfig(name, parsed, configFile) {
+  validateConfigName(name);
+  const destination = configFilePath(configFile);
+  const store = readConfigStore(destination);
+  store.version = 1;
+  store.configs[name] = configEntryFromParsed(parsed);
+
+  mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+  const temporary = `${destination}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporary, destination);
+  chmodSync(destination, 0o600);
+  return destination;
+}
+
+export function loadConfig(search, configFile) {
+  validateConfigName(search);
+  const destination = configFilePath(configFile);
+  const store = readConfigStore(destination);
+  const names = Object.keys(store.configs);
+  const exact = names.find((name) => name === search);
+  const candidates = exact
+    ? [exact]
+    : names.filter((name) => name.toLowerCase().includes(search.toLowerCase()));
+
+  if (candidates.length === 0) {
+    throw new Error(`saved config not found: ${search}\nconfig file: ${destination}`);
+  }
+  if (candidates.length > 1) {
+    throw new Error(
+      `saved config search is ambiguous: ${search}\n` +
+        candidates.map((name) => `  ${name}`).join("\n"),
+    );
+  }
+
+  const entry = store.configs[candidates[0]];
+  if (!entry || !Array.isArray(entry.args)) {
+    throw new Error(`invalid saved config: ${candidates[0]}`);
+  }
+
+  return {
+    piArguments: [...entry.args],
+    useDefaults: entry.useDefaults !== false,
+    hasExtension: entry.hasExtension ?? entry.args.includes("--extension"),
+    hasSkill: entry.hasSkill ?? entry.args.includes("--skill"),
+    dryRun: false,
+  };
+}
+
+function mergeParsedArguments(saved, current) {
+  return {
+    piArguments: [...saved.piArguments, ...current.piArguments],
+    useDefaults: saved.useDefaults && current.useDefaults,
+    hasExtension: saved.hasExtension || current.hasExtension,
+    hasSkill: saved.hasSkill || current.hasSkill,
+    dryRun: saved.dryRun || current.dryRun,
+  };
+}
+
 export function parseArguments(argv) {
   const piArguments = [];
   let parseOptions = true;
   let useDefaults = true;
   let hasExtension = false;
   let hasSkill = false;
+  let saveName;
+  let importName;
   let dryRun = false;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -302,6 +405,30 @@ export function parseArguments(argv) {
 
     if (parseOptions && argument === "--dry-run") {
       dryRun = true;
+      continue;
+    }
+
+    if (parseOptions && (argument === "--save" || argument === "--import" || argument === "-i")) {
+      const name = argv[index + 1];
+      if (name === undefined) {
+        throw new Error(`${argument} requires a config name`);
+      }
+      if (argument === "--save") saveName = name;
+      else importName = name;
+      index += 1;
+      continue;
+    }
+
+    if (parseOptions && (argument.startsWith("--save=") || argument.startsWith("--import="))) {
+      const [option, name] = argument.split("=", 2);
+      if (!name) throw new Error(`${option} requires a config name`);
+      if (option === "--save") saveName = name;
+      else importName = name;
+      continue;
+    }
+
+    if (parseOptions && argument.startsWith("-i") && argument.length > 2) {
+      importName = argument.slice(2);
       continue;
     }
 
@@ -363,7 +490,15 @@ export function parseArguments(argv) {
     piArguments.push(argument);
   }
 
-  return { piArguments, useDefaults, hasExtension, hasSkill, dryRun };
+  return {
+    piArguments,
+    useDefaults,
+    hasExtension,
+    hasSkill,
+    saveName,
+    importName,
+    dryRun,
+  };
 }
 
 export function buildPiArguments(parsed, agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR) {
@@ -405,6 +540,8 @@ function printHelp() {
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  -e, --extension <name|path>  Load an extension (repeatable)\n`);
   process.stdout.write(`  -s, --skill <name|path>      Load a skill (repeatable)\n`);
+  process.stdout.write(`  -i, --import <search>        Load a saved configuration\n`);
+  process.stdout.write(`  --save <name>                Save this configuration and exit\n`);
   process.stdout.write(`  --no-defaults                Do not add default discovery flags\n`);
   process.stdout.write(`  --allow-discovery            Alias for --no-defaults\n`);
   process.stdout.write(`  --dry-run                    Print the command without running pi\n`);
@@ -422,6 +559,26 @@ export function main(argv = process.argv.slice(2)) {
     if (parsed.help) {
       printHelp();
       return 0;
+    }
+
+    if (parsed.saveName && parsed.importName) {
+      throw new Error("--save and --import cannot be used together");
+    }
+
+    const configFile = process.env.PI_CLI_CONFIG_FILE ||
+      join(process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR, CONFIG_FILENAME);
+    if (parsed.saveName) {
+      // Validate resource names now, while still storing the original names
+      // so imports can resolve them again if paths move.
+      buildPiArguments(parsed);
+      const destination = saveConfig(parsed.saveName, parsed, configFile);
+      process.stdout.write(`saved config ${parsed.saveName} to ${destination}\n`);
+      return 0;
+    }
+
+    if (parsed.importName) {
+      const saved = loadConfig(parsed.importName, configFile);
+      parsed = mergeParsedArguments(saved, parsed);
     }
 
     const piArguments = buildPiArguments(parsed);
