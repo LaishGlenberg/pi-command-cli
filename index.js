@@ -446,7 +446,9 @@ export function parseArguments(argv) {
       if (requested === undefined) {
         throw new Error(`${argument} requires an extension name or path`);
       }
-      piArguments.push("--extension", requested);
+      for (const item of requested.split(",")) {
+        piArguments.push("--extension", item);
+      }
       hasExtension = true;
       index += 1;
       continue;
@@ -455,13 +457,17 @@ export function parseArguments(argv) {
     if (parseOptions && argument.startsWith("--extension=")) {
       const requested = argument.slice("--extension=".length);
       if (!requested) throw new Error("--extension requires an extension name or path");
-      piArguments.push("--extension", requested);
+      for (const item of requested.split(",")) {
+        piArguments.push("--extension", item);
+      }
       hasExtension = true;
       continue;
     }
 
     if (parseOptions && argument.startsWith("-e") && argument.length > 2) {
-      piArguments.push("--extension", argument.slice(2));
+      for (const item of argument.slice(2).split(",")) {
+        piArguments.push("--extension", item);
+      }
       hasExtension = true;
       continue;
     }
@@ -471,7 +477,9 @@ export function parseArguments(argv) {
       if (requested === undefined) {
         throw new Error(`${argument} requires a skill name or path`);
       }
-      piArguments.push("--skill", requested);
+      for (const item of requested.split(",")) {
+        piArguments.push("--skill", item);
+      }
       hasSkill = true;
       index += 1;
       continue;
@@ -480,13 +488,17 @@ export function parseArguments(argv) {
     if (parseOptions && argument.startsWith("--skill=")) {
       const requested = argument.slice("--skill=".length);
       if (!requested) throw new Error("--skill requires a skill name or path");
-      piArguments.push("--skill", requested);
+      for (const item of requested.split(",")) {
+        piArguments.push("--skill", item);
+      }
       hasSkill = true;
       continue;
     }
 
     if (parseOptions && argument.startsWith("-s") && argument.length > 2) {
-      piArguments.push("--skill", argument.slice(2));
+      for (const item of argument.slice(2).split(",")) {
+        piArguments.push("--skill", item);
+      }
       hasSkill = true;
       continue;
     }
@@ -496,7 +508,9 @@ export function parseArguments(argv) {
       if (requested === undefined) {
         throw new Error(`${argument} requires a tool allowlist`);
       }
-      piArguments.push("--tools", requested);
+      for (const item of requested.split(",")) {
+        piArguments.push("--tools", item);
+      }
       hasTools = true;
       index += 1;
       continue;
@@ -505,13 +519,17 @@ export function parseArguments(argv) {
     if (parseOptions && argument.startsWith("--tools=")) {
       const requested = argument.slice("--tools=".length);
       if (!requested) throw new Error("--tools requires a tool allowlist");
-      piArguments.push("--tools", requested);
+      for (const item of requested.split(",")) {
+        piArguments.push("--tools", item);
+      }
       hasTools = true;
       continue;
     }
 
     if (parseOptions && argument.startsWith("-t") && argument.length > 2) {
-      piArguments.push("--tools", argument.slice(2));
+      for (const item of argument.slice(2).split(",")) {
+        piArguments.push("--tools", item);
+      }
       hasTools = true;
       continue;
     }

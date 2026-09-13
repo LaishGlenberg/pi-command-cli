@@ -130,6 +130,47 @@ test("saves raw resource names and imports exact or partial config names", async
   assert.equal(loaded.hasSkill, true);
 });
 
+test("splits comma-separated extensions", async () => {
+  const agentDir = await fixture();
+  const parsed = parseArguments(["-e", "pi-intercom,local-extension"]);
+
+  assert.deepEqual(buildPiArguments(parsed, agentDir), [
+    "-ns",
+    "-ne",
+    "--extension",
+    join(agentDir, "npm", "node_modules", "pi-intercom"),
+    "--extension",
+    join(agentDir, "extensions", "local-extension"),
+  ]);
+});
+
+test("splits comma-separated skills", async () => {
+  const agentDir = await fixture();
+  const parsed = parseArguments(["-s", "playwright-cli,pi-intercom"]);
+
+  assert.deepEqual(buildPiArguments(parsed, agentDir), [
+    "-ns",
+    "--skill",
+    join(agentDir, "skills", "playwright-cli.md"),
+    "--skill",
+    join(agentDir, "npm", "node_modules", "pi-intercom", "skills", "pi-intercom"),
+  ]);
+});
+
+test("individual flags still work alongside comma-separated", async () => {
+  const agentDir = await fixture();
+  const parsed = parseArguments(["-e", "pi-intercom", "-e", "local-extension"]);
+
+  assert.deepEqual(buildPiArguments(parsed, agentDir), [
+    "-ns",
+    "-ne",
+    "--extension",
+    join(agentDir, "npm", "node_modules", "pi-intercom"),
+    "--extension",
+    join(agentDir, "extensions", "local-extension"),
+  ]);
+});
+
 test("expands tool allowlist flags and adds -nbt", async () => {
   const agentDir = await fixture();
   const parsed = parseArguments(["-t", "read,bash", "--tools=edit"]);
@@ -139,7 +180,9 @@ test("expands tool allowlist flags and adds -nbt", async () => {
     "-ne",
     "-nbt",
     "--tools",
-    "read,bash",
+    "read",
+    "--tools",
+    "bash",
     "--tools",
     "edit",
   ]);
