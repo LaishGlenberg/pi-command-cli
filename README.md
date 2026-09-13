@@ -10,6 +10,7 @@ pi-cli -e pi-intercom "inspect this project"
 pi-cli -e pi-intercom -e pi-mcp-adapter
 pi-cli -s playwright-cli
 pi-cli -s pi-intercom
+pi-cli -t read,bash
 ```
 
 The equivalent Pi invocation for the first example is:

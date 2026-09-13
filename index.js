@@ -318,6 +318,7 @@ function configEntryFromParsed(parsed) {
     useDefaults: parsed.useDefaults,
     hasExtension: parsed.hasExtension,
     hasSkill: parsed.hasSkill,
+    hasTools: parsed.hasTools,
   };
 }
 
@@ -366,6 +367,7 @@ export function loadConfig(search, configFile) {
     useDefaults: entry.useDefaults !== false,
     hasExtension: entry.hasExtension ?? entry.args.includes("--extension"),
     hasSkill: entry.hasSkill ?? entry.args.includes("--skill"),
+    hasTools: entry.hasTools ?? entry.args.includes("--tools"),
     dryRun: false,
   };
 }
@@ -376,6 +378,7 @@ function mergeParsedArguments(saved, current) {
     useDefaults: saved.useDefaults && current.useDefaults,
     hasExtension: saved.hasExtension || current.hasExtension,
     hasSkill: saved.hasSkill || current.hasSkill,
+    hasTools: saved.hasTools || current.hasTools,
     dryRun: saved.dryRun || current.dryRun,
   };
 }
@@ -386,6 +389,7 @@ export function parseArguments(argv) {
   let useDefaults = true;
   let hasExtension = false;
   let hasSkill = false;
+  let hasTools = false;
   let saveName;
   let importName;
   let dryRun = false;
@@ -487,6 +491,31 @@ export function parseArguments(argv) {
       continue;
     }
 
+    if (parseOptions && (argument === "--tools" || argument === "-t")) {
+      const requested = argv[index + 1];
+      if (requested === undefined) {
+        throw new Error(`${argument} requires a tool allowlist`);
+      }
+      piArguments.push("--tools", requested);
+      hasTools = true;
+      index += 1;
+      continue;
+    }
+
+    if (parseOptions && argument.startsWith("--tools=")) {
+      const requested = argument.slice("--tools=".length);
+      if (!requested) throw new Error("--tools requires a tool allowlist");
+      piArguments.push("--tools", requested);
+      hasTools = true;
+      continue;
+    }
+
+    if (parseOptions && argument.startsWith("-t") && argument.length > 2) {
+      piArguments.push("--tools", argument.slice(2));
+      hasTools = true;
+      continue;
+    }
+
     piArguments.push(argument);
   }
 
@@ -495,6 +524,7 @@ export function parseArguments(argv) {
     useDefaults,
     hasExtension,
     hasSkill,
+    hasTools,
     saveName,
     importName,
     dryRun,
@@ -524,8 +554,9 @@ export function buildPiArguments(parsed, agentDir = process.env.PI_AGENT_DIR || 
   if (!parsed.useDefaults) return resolved;
   // Explicit skills disable skill discovery. Keep extension discovery enabled
   // unless an extension was also explicitly requested.
-  if (parsed.hasSkill && !parsed.hasExtension) return ["-ns", ...resolved];
-  return ["-ns", "-ne", ...resolved];
+  const defaults = parsed.hasTools ? ["-nbt"] : [];
+  if (parsed.hasSkill && !parsed.hasExtension) return ["-ns", ...defaults, ...resolved];
+  return ["-ns", "-ne", ...defaults, ...resolved];
 }
 
 function shellQuote(argument) {
@@ -540,6 +571,7 @@ function printHelp() {
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  -e, --extension <name|path>  Load an extension (repeatable)\n`);
   process.stdout.write(`  -s, --skill <name|path>      Load a skill (repeatable)\n`);
+  process.stdout.write(`  -t, --tools <tools>          Comma-separated tool allowlist (implies -nbt)\n`);
   process.stdout.write(`  -i, --import <search>        Load a saved configuration\n`);
   process.stdout.write(`  --save <name>                Save this configuration and exit\n`);
   process.stdout.write(`  --no-defaults                Do not add default discovery flags\n`);

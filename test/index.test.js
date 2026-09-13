@@ -130,6 +130,42 @@ test("saves raw resource names and imports exact or partial config names", async
   assert.equal(loaded.hasSkill, true);
 });
 
+test("expands tool allowlist flags and adds -nbt", async () => {
+  const agentDir = await fixture();
+  const parsed = parseArguments(["-t", "read,bash", "--tools=edit"]);
+
+  assert.deepEqual(buildPiArguments(parsed, agentDir), [
+    "-ns",
+    "-ne",
+    "-nbt",
+    "--tools",
+    "read,bash",
+    "--tools",
+    "edit",
+  ]);
+});
+
+test("adds -nbt with combined short tool flag", () => {
+  const parsed = parseArguments(["-tread"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "-ns",
+    "-ne",
+    "-nbt",
+    "--tools",
+    "read",
+  ]);
+});
+
+test("does not add -nbt when no tools flag is present", () => {
+  const parsed = parseArguments(["--model", "google/gemini"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "-ns",
+    "-ne",
+    "--model",
+    "google/gemini",
+  ]);
+});
+
 test("supports opting out of the default discovery flags", () => {
   const parsed = parseArguments(["--no-defaults", "--model", "google/gemini"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
