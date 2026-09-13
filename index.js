@@ -290,7 +290,7 @@ function configFilePath(configFile) {
 }
 
 function validateConfigName(name) {
-  if (!name || name === "." || name === ".." || /[\\/\\0]/.test(name)) {
+  if (!name || name === "." || name === ".." || /[\\/\0]/.test(name)) {
     throw new Error("config name must be non-empty and cannot contain path separators");
   }
 }
