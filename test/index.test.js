@@ -217,13 +217,14 @@ test("supports opting out of the default discovery flags", () => {
   ]);
 });
 
-test("--nothing adds -ne -ns -nc -np and suppresses defaults", () => {
+test("--nothing adds -ne -ns -nc -np -nbt and suppresses defaults", () => {
   const parsed = parseArguments(["--nothing"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
     "-ne",
     "-ns",
     "-nc",
     "-np",
+    "-nbt",
   ]);
 });
 
@@ -234,6 +235,7 @@ test("-n is a shorthand for --nothing", () => {
     "-ns",
     "-nc",
     "-np",
+    "-nbt",
   ]);
 });
 
@@ -245,6 +247,7 @@ test("--nothing composes with -e to kill all extensions then load specific ones"
     "-ns",
     "-nc",
     "-np",
+    "-nbt",
     "--extension",
     join(agentDir, "npm", "node_modules", "pi-intercom"),
   ]);
@@ -258,6 +261,7 @@ test("--nothing composes with -s to kill all skills then load specific ones", as
     "-ns",
     "-nc",
     "-np",
+    "-nbt",
     "--skill",
     join(agentDir, "skills", "playwright-cli.md"),
   ]);
@@ -270,6 +274,22 @@ test("--nothing passes through positional arguments", () => {
     "-ns",
     "-nc",
     "-np",
+    "-nbt",
     "hello world",
+  ]);
+});
+
+test("-n with -t does not duplicate -nbt", () => {
+  const parsed = parseArguments(["-n", "-t", "read,bash"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "-ne",
+    "-ns",
+    "-nc",
+    "-np",
+    "-nbt",
+    "--tools",
+    "read",
+    "--tools",
+    "bash",
   ]);
 });

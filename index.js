@@ -408,7 +408,8 @@ export function parseArguments(argv) {
     if (parseOptions && (argument === "--nothing" || argument === "-n")) {
       groups.add("nothing");
       useDefaults = false;
-      piArguments.push("-ne", "-ns", "-nc", "-np");
+      piArguments.push("-ne", "-ns", "-nc", "-np", "-nbt");
+      groups.add("nbt");
       continue;
     }
 
@@ -510,6 +511,10 @@ export function parseArguments(argv) {
 
     if (parseOptions && (argument === "--tools" || argument === "-t")) {
       groups.add("tools");
+      if (!groups.has("nbt")) {
+        groups.add("nbt");
+        piArguments.push("-nbt");
+      }
       const requested = argv[index + 1];
       if (requested === undefined) {
         throw new Error(`${argument} requires a tool allowlist`);
@@ -523,6 +528,10 @@ export function parseArguments(argv) {
 
     if (parseOptions && argument.startsWith("--tools=")) {
       groups.add("tools");
+      if (!groups.has("nbt")) {
+        groups.add("nbt");
+        piArguments.push("-nbt");
+      }
       const requested = argument.slice("--tools=".length);
       if (!requested) throw new Error("--tools requires a tool allowlist");
       for (const item of requested.split(",")) {
@@ -533,6 +542,10 @@ export function parseArguments(argv) {
 
     if (parseOptions && argument.startsWith("-t") && argument.length > 2) {
       groups.add("tools");
+      if (!groups.has("nbt")) {
+        groups.add("nbt");
+        piArguments.push("-nbt");
+      }
       for (const item of argument.slice(2).split(",")) {
         piArguments.push("--tools", item);
       }
@@ -578,9 +591,8 @@ export function buildPiArguments(parsed, agentDir = process.env.PI_AGENT_DIR || 
   if (!parsed.useDefaults) return resolved;
   // Explicit skills disable skill discovery. Keep extension discovery enabled
   // unless an extension was also explicitly requested.
-  const defaults = parsed.hasTools ? ["-nbt"] : [];
-  if (parsed.hasSkill && !parsed.hasExtension) return ["-ns", ...defaults, ...resolved];
-  return ["-ns", "-ne", ...defaults, ...resolved];
+  if (parsed.hasSkill && !parsed.hasExtension) return ["-ns", ...resolved];
+  return ["-ns", "-ne", ...resolved];
 }
 
 function shellQuote(argument) {
