@@ -37,8 +37,18 @@ pi -ns --skill "$HOME/.pi/agent/skills/playwright-cli.md"
 `pi-cli -s pi-intercom` resolves the skill directory shipped by the extension.
 
 Existing extension and skill paths continue to work. Use `--dry-run` to inspect
-the expanded command, and `--no-defaults` when Pi's normal discovery should
-stay enabled. Set `PI_BIN` to use a different Pi executable.
+the expanded command, `--no-defaults` when Pi's normal discovery should
+stay enabled, or `-n` / `--nothing` to start from a clean slate:
+
+```bash
+pi-cli -n
+# equivalent to: pi -ne -ns -nc -np
+
+pi-cli -n -e pi-intercom
+# kills all extensions/skills/computer/playwright, then loads pi-intercom
+```
+
+Set `PI_BIN` to use a different Pi executable.
 
 Save named configurations in `~/.pi/agent/pi-cli-configs.json`:
 

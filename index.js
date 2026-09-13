@@ -387,9 +387,7 @@ export function parseArguments(argv) {
   const piArguments = [];
   let parseOptions = true;
   let useDefaults = true;
-  let hasExtension = false;
-  let hasSkill = false;
-  let hasTools = false;
+  const groups = new Set();
   let saveName;
   let importName;
   let dryRun = false;
@@ -405,6 +403,13 @@ export function parseArguments(argv) {
 
     if (parseOptions && (argument === "--help" || argument === "-h")) {
       return { help: true };
+    }
+
+    if (parseOptions && (argument === "--nothing" || argument === "-n")) {
+      groups.add("nothing");
+      useDefaults = false;
+      piArguments.push("-ne", "-ns", "-nc", "-np");
+      continue;
     }
 
     if (parseOptions && argument === "--dry-run") {
@@ -442,6 +447,7 @@ export function parseArguments(argv) {
     }
 
     if (parseOptions && (argument === "--extension" || argument === "-e")) {
+      groups.add("extension");
       const requested = argv[index + 1];
       if (requested === undefined) {
         throw new Error(`${argument} requires an extension name or path`);
@@ -449,30 +455,30 @@ export function parseArguments(argv) {
       for (const item of requested.split(",")) {
         piArguments.push("--extension", item);
       }
-      hasExtension = true;
       index += 1;
       continue;
     }
 
     if (parseOptions && argument.startsWith("--extension=")) {
+      groups.add("extension");
       const requested = argument.slice("--extension=".length);
       if (!requested) throw new Error("--extension requires an extension name or path");
       for (const item of requested.split(",")) {
         piArguments.push("--extension", item);
       }
-      hasExtension = true;
       continue;
     }
 
     if (parseOptions && argument.startsWith("-e") && argument.length > 2) {
+      groups.add("extension");
       for (const item of argument.slice(2).split(",")) {
         piArguments.push("--extension", item);
       }
-      hasExtension = true;
       continue;
     }
 
     if (parseOptions && (argument === "--skill" || argument === "-s")) {
+      groups.add("skill");
       const requested = argv[index + 1];
       if (requested === undefined) {
         throw new Error(`${argument} requires a skill name or path`);
@@ -480,30 +486,30 @@ export function parseArguments(argv) {
       for (const item of requested.split(",")) {
         piArguments.push("--skill", item);
       }
-      hasSkill = true;
       index += 1;
       continue;
     }
 
     if (parseOptions && argument.startsWith("--skill=")) {
+      groups.add("skill");
       const requested = argument.slice("--skill=".length);
       if (!requested) throw new Error("--skill requires a skill name or path");
       for (const item of requested.split(",")) {
         piArguments.push("--skill", item);
       }
-      hasSkill = true;
       continue;
     }
 
     if (parseOptions && argument.startsWith("-s") && argument.length > 2) {
+      groups.add("skill");
       for (const item of argument.slice(2).split(",")) {
         piArguments.push("--skill", item);
       }
-      hasSkill = true;
       continue;
     }
 
     if (parseOptions && (argument === "--tools" || argument === "-t")) {
+      groups.add("tools");
       const requested = argv[index + 1];
       if (requested === undefined) {
         throw new Error(`${argument} requires a tool allowlist`);
@@ -511,26 +517,25 @@ export function parseArguments(argv) {
       for (const item of requested.split(",")) {
         piArguments.push("--tools", item);
       }
-      hasTools = true;
       index += 1;
       continue;
     }
 
     if (parseOptions && argument.startsWith("--tools=")) {
+      groups.add("tools");
       const requested = argument.slice("--tools=".length);
       if (!requested) throw new Error("--tools requires a tool allowlist");
       for (const item of requested.split(",")) {
         piArguments.push("--tools", item);
       }
-      hasTools = true;
       continue;
     }
 
     if (parseOptions && argument.startsWith("-t") && argument.length > 2) {
+      groups.add("tools");
       for (const item of argument.slice(2).split(",")) {
         piArguments.push("--tools", item);
       }
-      hasTools = true;
       continue;
     }
 
@@ -540,9 +545,10 @@ export function parseArguments(argv) {
   return {
     piArguments,
     useDefaults,
-    hasExtension,
-    hasSkill,
-    hasTools,
+    hasExtension: groups.has("extension"),
+    hasSkill: groups.has("skill"),
+    hasTools: groups.has("tools"),
+    nothing: groups.has("nothing"),
     saveName,
     importName,
     dryRun,
@@ -594,6 +600,7 @@ function printHelp() {
   process.stdout.write(`  --save <name>                Save this configuration and exit\n`);
   process.stdout.write(`  --no-defaults                Do not add default discovery flags\n`);
   process.stdout.write(`  --allow-discovery            Alias for --no-defaults\n`);
+  process.stdout.write(`  -n, --nothing                Equivalent to "-ne -ns -nc -np"\n`);
   process.stdout.write(`  --dry-run                    Print the command without running pi\n`);
   process.stdout.write(`  -h, --help                   Show this help\n\n`);
   process.stdout.write(`Extension and skill search roots:\n`);

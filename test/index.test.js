@@ -216,3 +216,60 @@ test("supports opting out of the default discovery flags", () => {
     "google/gemini",
   ]);
 });
+
+test("--nothing adds -ne -ns -nc -np and suppresses defaults", () => {
+  const parsed = parseArguments(["--nothing"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "-ne",
+    "-ns",
+    "-nc",
+    "-np",
+  ]);
+});
+
+test("-n is a shorthand for --nothing", () => {
+  const parsed = parseArguments(["-n"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "-ne",
+    "-ns",
+    "-nc",
+    "-np",
+  ]);
+});
+
+test("--nothing composes with -e to kill all extensions then load specific ones", async () => {
+  const agentDir = await fixture();
+  const parsed = parseArguments(["-n", "-e", "pi-intercom"]);
+  assert.deepEqual(buildPiArguments(parsed, agentDir), [
+    "-ne",
+    "-ns",
+    "-nc",
+    "-np",
+    "--extension",
+    join(agentDir, "npm", "node_modules", "pi-intercom"),
+  ]);
+});
+
+test("--nothing composes with -s to kill all skills then load specific ones", async () => {
+  const agentDir = await fixture();
+  const parsed = parseArguments(["-n", "-s", "playwright-cli"]);
+  assert.deepEqual(buildPiArguments(parsed, agentDir), [
+    "-ne",
+    "-ns",
+    "-nc",
+    "-np",
+    "--skill",
+    join(agentDir, "skills", "playwright-cli.md"),
+  ]);
+});
+
+test("--nothing passes through positional arguments", () => {
+  const parsed = parseArguments(["-n", "hello world"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "-ne",
+    "-ns",
+    "-nc",
+    "-np",
+    "hello world",
+  ]);
+});
