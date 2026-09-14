@@ -50,18 +50,32 @@ pi-cli -n -e pi-intercom
 
 Set `PI_BIN` to use a different Pi executable.
 
-Save named configurations in `~/.pi/agent/pi-cli-configs.json`:
+Save named configurations in `~/.pi/agent/settings.json` (the same file Pi
+uses for its own settings, under a `piCli` key):
 
 ```bash
 pi-cli --save searcher -e pi-intercom -s playwright-cli
+# or shorthand:
+pi-cli -S searcher -e pi-intercom -s playwright-cli
 pi-cli --import searcher
 # -i searcher is an alias for --import searcher
 ```
 
-Configurations save the structured arguments—not a shell command string—so
-extension and skill names are resolved again when imported. Import searches
-exact names first, then unique partial matches. Use `PI_CLI_CONFIG_FILE` to
-choose a different config file.
+Configurations are stored as plain command strings, so you can edit them by
+hand:
+
+```json
+{
+  "piCli": {
+    "searcher": "pi-cli -e pi-intercom -s playwright-cli",
+    "quick": "pi-cli --model google/gemini"
+  }
+}
+```
+
+When imported, the stored command is re-parsed from scratch, so extension and
+skill names are resolved again. Import searches exact names first, then unique
+partial matches (case-insensitive).
 
 Install the command locally with:
 

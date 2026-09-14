@@ -17,7 +17,8 @@ import { dirname, extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
-const CONFIG_FILENAME = "pi-cli-configs.json";
+const SETTINGS_FILENAME = "settings.json";
+const PI_CLI_KEY = "piCli";
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs"]);
 const SKIPPED_DIRECTORIES = new Set(["node_modules", ".git"]);
 
@@ -284,9 +285,34 @@ export function resolveSkill(requested, agentDir = process.env.PI_AGENT_DIR || D
   );
 }
 
-function configFilePath(configFile) {
-  const defaultFile = join(process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR, CONFIG_FILENAME);
-  return resolve(configFile || process.env.PI_CLI_CONFIG_FILE || defaultFile);
+function settingsPath() {
+  return join(process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR, SETTINGS_FILENAME);
+}
+
+function readSettings(settingsFilePath) {
+  const path = settingsFilePath || settingsPath();
+  if (!existsSync(path)) return {};
+
+  let settings;
+  try {
+    settings = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    throw new Error(`could not read settings file ${path}: ${error.message}`);
+  }
+
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    throw new Error(`invalid settings file: ${path}`);
+  }
+  return settings;
+}
+
+function writeSettings(settings, settingsFilePath) {
+  const path = settingsFilePath || settingsPath();
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporary, path);
+  chmodSync(path, 0o600);
 }
 
 function validateConfigName(name) {
@@ -295,60 +321,61 @@ function validateConfigName(name) {
   }
 }
 
-function readConfigStore(configFile) {
-  if (!existsSync(configFile)) return { version: 1, configs: {} };
-
-  let store;
-  try {
-    store = JSON.parse(readFileSync(configFile, "utf8"));
-  } catch (error) {
-    throw new Error(`could not read config file ${configFile}: ${error.message}`);
+function stripSaveFlag(argv) {
+  const kept = [];
+  let index = 0;
+  while (index < argv.length) {
+    const argument = argv[index];
+    if (argument === "--save" || argument === "-S") {
+      index += 2;
+      continue;
+    }
+    if (argument.startsWith("--save=")) {
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("-S") && argument.length > 2) {
+      index += 1;
+      continue;
+    }
+    kept.push(argument);
+    index += 1;
   }
-
-  if (!store || typeof store !== "object" || Array.isArray(store) ||
-      !store.configs || typeof store.configs !== "object" || Array.isArray(store.configs)) {
-    throw new Error(`invalid pi-cli config file: ${configFile}`);
-  }
-  return store;
+  return kept;
 }
 
-function configEntryFromParsed(parsed) {
-  return {
-    args: parsed.piArguments,
-    useDefaults: parsed.useDefaults,
-    hasExtension: parsed.hasExtension,
-    hasSkill: parsed.hasSkill,
-    hasTools: parsed.hasTools,
-  };
-}
-
-export function saveConfig(name, parsed, configFile) {
+export function saveConfig(name, command, settingsFilePath) {
   validateConfigName(name);
-  const destination = configFilePath(configFile);
-  const store = readConfigStore(destination);
-  store.version = 1;
-  store.configs[name] = configEntryFromParsed(parsed);
+  const path = settingsFilePath || settingsPath();
+  const settings = existsSync(path) ? readSettings(path) : {};
 
-  mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
-  const temporary = `${destination}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
-  renameSync(temporary, destination);
-  chmodSync(destination, 0o600);
-  return destination;
+  if (!settings[PI_CLI_KEY] || typeof settings[PI_CLI_KEY] !== "object" || Array.isArray(settings[PI_CLI_KEY])) {
+    settings[PI_CLI_KEY] = {};
+  }
+  settings[PI_CLI_KEY][name] = command;
+
+  writeSettings(settings, path);
+  return path;
 }
 
-export function loadConfig(search, configFile) {
+export function loadConfig(search, settingsFilePath) {
   validateConfigName(search);
-  const destination = configFilePath(configFile);
-  const store = readConfigStore(destination);
-  const names = Object.keys(store.configs);
+  const path = settingsFilePath || settingsPath();
+  const settings = readSettings(path);
+
+  const configs = settings[PI_CLI_KEY];
+  if (!configs || typeof configs !== "object" || Array.isArray(configs)) {
+    throw new Error(`no saved configs found\nsettings file: ${path}`);
+  }
+
+  const names = Object.keys(configs);
   const exact = names.find((name) => name === search);
   const candidates = exact
     ? [exact]
     : names.filter((name) => name.toLowerCase().includes(search.toLowerCase()));
 
   if (candidates.length === 0) {
-    throw new Error(`saved config not found: ${search}\nconfig file: ${destination}`);
+    throw new Error(`saved config not found: ${search}\nsettings file: ${path}`);
   }
   if (candidates.length > 1) {
     throw new Error(
@@ -357,19 +384,17 @@ export function loadConfig(search, configFile) {
     );
   }
 
-  const entry = store.configs[candidates[0]];
-  if (!entry || !Array.isArray(entry.args)) {
+  const command = configs[candidates[0]];
+  if (typeof command !== "string") {
     throw new Error(`invalid saved config: ${candidates[0]}`);
   }
 
-  return {
-    piArguments: [...entry.args],
-    useDefaults: entry.useDefaults !== false,
-    hasExtension: entry.hasExtension ?? entry.args.includes("--extension"),
-    hasSkill: entry.hasSkill ?? entry.args.includes("--skill"),
-    hasTools: entry.hasTools ?? entry.args.includes("--tools"),
-    dryRun: false,
-  };
+  // Re-parse the stored command string as fresh argv (skip the leading "pi-cli").
+  const tokens = command.split(/\s+/);
+  if (tokens[0] === "pi-cli") tokens.shift();
+  const saved = parseArguments(tokens);
+  saved.importName = candidates[0];
+  return saved;
 }
 
 function mergeParsedArguments(saved, current) {
@@ -379,6 +404,7 @@ function mergeParsedArguments(saved, current) {
     hasExtension: saved.hasExtension || current.hasExtension,
     hasSkill: saved.hasSkill || current.hasSkill,
     hasTools: saved.hasTools || current.hasTools,
+    nothing: saved.nothing || current.nothing,
     dryRun: saved.dryRun || current.dryRun,
   };
 }
@@ -418,12 +444,12 @@ export function parseArguments(argv) {
       continue;
     }
 
-    if (parseOptions && (argument === "--save" || argument === "--import" || argument === "-i")) {
+    if (parseOptions && (argument === "--save" || argument === "--import" || argument === "-i" || argument === "-S")) {
       const name = argv[index + 1];
       if (name === undefined) {
         throw new Error(`${argument} requires a config name`);
       }
-      if (argument === "--save") saveName = name;
+      if (argument === "--save" || argument === "-S") saveName = name;
       else importName = name;
       index += 1;
       continue;
@@ -439,6 +465,11 @@ export function parseArguments(argv) {
 
     if (parseOptions && argument.startsWith("-i") && argument.length > 2) {
       importName = argument.slice(2);
+      continue;
+    }
+
+    if (parseOptions && argument.startsWith("-S") && argument.length > 2) {
+      saveName = argument.slice(2);
       continue;
     }
 
@@ -519,9 +550,7 @@ export function parseArguments(argv) {
       if (requested === undefined) {
         throw new Error(`${argument} requires a tool allowlist`);
       }
-      for (const item of requested.split(",")) {
-        piArguments.push("--tools", item);
-      }
+      piArguments.push("--tools", requested);
       index += 1;
       continue;
     }
@@ -534,9 +563,7 @@ export function parseArguments(argv) {
       }
       const requested = argument.slice("--tools=".length);
       if (!requested) throw new Error("--tools requires a tool allowlist");
-      for (const item of requested.split(",")) {
-        piArguments.push("--tools", item);
-      }
+      piArguments.push("--tools", requested);
       continue;
     }
 
@@ -546,9 +573,7 @@ export function parseArguments(argv) {
         groups.add("nbt");
         piArguments.push("-nbt");
       }
-      for (const item of argument.slice(2).split(",")) {
-        piArguments.push("--tools", item);
-      }
+      piArguments.push("--tools", argument.slice(2));
       continue;
     }
 
@@ -609,7 +634,7 @@ function printHelp() {
   process.stdout.write(`  -s, --skill <name|path>      Load a skill (repeatable)\n`);
   process.stdout.write(`  -t, --tools <tools>          Comma-separated tool allowlist (implies -nbt)\n`);
   process.stdout.write(`  -i, --import <search>        Load a saved configuration\n`);
-  process.stdout.write(`  --save <name>                Save this configuration and exit\n`);
+  process.stdout.write(`  -S, --save <name>            Save this configuration and exit\n`);
   process.stdout.write(`  --no-defaults                Do not add default discovery flags\n`);
   process.stdout.write(`  --allow-discovery            Alias for --no-defaults\n`);
   process.stdout.write(`  -n, --nothing                Equivalent to "-ne -ns -nc -np"\n`);
@@ -634,19 +659,19 @@ export function main(argv = process.argv.slice(2)) {
       throw new Error("--save and --import cannot be used together");
     }
 
-    const configFile = process.env.PI_CLI_CONFIG_FILE ||
-      join(process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR, CONFIG_FILENAME);
     if (parsed.saveName) {
-      // Validate resource names now, while still storing the original names
-      // so imports can resolve them again if paths move.
+      // Validate resource names now so a typo in an extension/skill name
+      // fails before we write anything.
       buildPiArguments(parsed);
-      const destination = saveConfig(parsed.saveName, parsed, configFile);
-      process.stdout.write(`saved config ${parsed.saveName} to ${destination}\n`);
+      const tokens = stripSaveFlag(argv);
+      const command = ["pi-cli", ...tokens.map(shellQuote)].join(" ");
+      const destination = saveConfig(parsed.saveName, command);
+      process.stdout.write(`saved config "${parsed.saveName}" to ${destination}\n`);
       return 0;
     }
 
     if (parsed.importName) {
-      const saved = loadConfig(parsed.importName, configFile);
+      const saved = loadConfig(parsed.importName);
       parsed = mergeParsedArguments(saved, parsed);
     }
 
