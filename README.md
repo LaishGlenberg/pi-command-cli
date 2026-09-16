@@ -77,8 +77,33 @@ When imported, the stored command is re-parsed from scratch, so extension and
 skill names are resolved again. Import searches exact names first, then unique
 partial matches (case-insensitive).
 
-Install the command locally with:
+## Install
+
+From npm (global):
+
+```bash
+npm install -g pi-command-cli
+```
+
+From a checkout (local development):
 
 ```bash
 npm link
+```
+
+Or run without installing:
+
+```bash
+npx pi-command-cli -e pi-intercom
+```
+
+## Release
+
+```bash
+npm login          # once per machine
+npm test
+npm pack --dry-run # inspect the published file list
+npm version patch  # or minor/major; bumps version and creates a git tag
+npm publish        # add --otp=<code> when npm 2FA is enabled
+git push --follow-tags
 ```

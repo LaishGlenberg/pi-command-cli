@@ -9,6 +9,28 @@
   "bin": {
     "pi-cli": "./index.js"
   },
+  "files": [
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LaishGlenberg/pi-command-cli.git"
+  },
+  "homepage": "https://github.com/LaishGlenberg/pi-command-cli#readme",
+  "bugs": "https://github.com/LaishGlenberg/pi-command-cli/issues",
+  "keywords": [
+    "pi",
+    "pi-coding-agent",
+    "cli",
+    "agents",
+    "extensions",
+    "skills"
+  ],
+  "engines": {
+    "node": ">=18.13"
+  },
   "scripts": {
     "test": "node --test"
   }
