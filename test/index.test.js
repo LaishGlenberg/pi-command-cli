@@ -225,11 +225,11 @@ test("throws when the skill name is ambiguous", async () => {
 // parseArguments
 // ---------------------------------------------------------------------------
 
-test("expands extension flags and adds the default Pi flags", async () => {
+test("expands extension flags and disables extension discovery only", async () => {
   const agentDir = await fixture();
   const parsed = parseArguments(["-e", "pi-intercom", "--extension=local-extension", "hello"]);
   assert.deepEqual(buildPiArguments(parsed, agentDir), [
-    "-ns", "-ne",
+    "-ne",
     "--extension", join(agentDir, "npm", "node_modules", "pi-intercom"),
     "--extension", join(agentDir, "extensions", "local-extension"),
     "hello",
@@ -250,7 +250,7 @@ test("splits comma-separated extensions", async () => {
   const agentDir = await fixture();
   const parsed = parseArguments(["-e", "pi-intercom,local-extension"]);
   assert.deepEqual(buildPiArguments(parsed, agentDir), [
-    "-ns", "-ne",
+    "-ne",
     "--extension", join(agentDir, "npm", "node_modules", "pi-intercom"),
     "--extension", join(agentDir, "extensions", "local-extension"),
   ]);
@@ -270,7 +270,7 @@ test("individual flags still work alongside comma-separated", async () => {
   const agentDir = await fixture();
   const parsed = parseArguments(["-e", "pi-intercom", "-e", "local-extension"]);
   assert.deepEqual(buildPiArguments(parsed, agentDir), [
-    "-ns", "-ne",
+    "-ne",
     "--extension", join(agentDir, "npm", "node_modules", "pi-intercom"),
     "--extension", join(agentDir, "extensions", "local-extension"),
   ]);
@@ -485,6 +485,23 @@ test("buildPiArguments throws on --skill= syntax", () => {
   assert.throws(() => buildPiArguments({
     piArguments: ["--skill="], useDefaults: true, hasExtension: false, hasSkill: true,
   }, "/tmp/any"), { message: "--skill requires a name or path" });
+});
+
+test("buildPiArguments adds only -ne when an extension is present but no skill", async () => {
+  const agentDir = await fixture();
+  const extPath = join(agentDir, "extensions", "local-extension");
+  const parsed = {
+    piArguments: ["--extension", extPath],
+    useDefaults: true, hasExtension: true, hasSkill: false,
+  };
+  assert.deepEqual(buildPiArguments(parsed, agentDir), ["-ne", "--extension", extPath]);
+});
+
+test("buildPiArguments falls back to -ns -ne when no resources are named", () => {
+  const parsed = {
+    piArguments: ["--model", "foo"], useDefaults: true, hasExtension: false, hasSkill: false,
+  };
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/any"), ["-ns", "-ne", "--model", "foo"]);
 });
 
 test("buildPiArguments adds only -ns when a skill is present but no extension", async () => {

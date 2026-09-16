@@ -1,8 +1,9 @@
 # @lglen/pi-command-cli
 
 A small quality-of-life wrapper for launching Pi sessions. It passes normal Pi
-arguments through, adds `-ns -ne` for extension runs (or `-ns` for skill-only
-runs), and lets resource flags use names instead of absolute paths.
+arguments through, disables extension discovery (`-ne`) when extensions are named
+explicitly, disables skill discovery (`-ns`) when skills are named explicitly, and
+lets resource flags use names instead of absolute paths.
 
 ```bash
 pi-cli -e pi-intercom
@@ -16,8 +17,13 @@ pi-cli -t read,bash
 The equivalent Pi invocation for the first example is:
 
 ```bash
-pi -ns -ne --extension "$HOME/.pi/agent/npm/node_modules/pi-intercom"
+pi -ne --extension "$HOME/.pi/agent/npm/node_modules/pi-intercom"
 ```
+
+Naming extensions only disables *extension* discovery, so your skills keep
+loading. Naming skills only disables *skill* discovery, so your extensions keep
+loading. Naming both disables both. Runs with no `-e`/`-s` flags keep the fully
+isolated default (`-ns -ne`).
 
 Extension names are searched in:
 

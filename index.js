@@ -614,10 +614,12 @@ export function buildPiArguments(parsed, agentDir = process.env.PI_AGENT_DIR || 
   }
 
   if (!parsed.useDefaults) return resolved;
-  // Explicit skills disable skill discovery. Keep extension discovery enabled
-  // unless an extension was also explicitly requested.
-  if (parsed.hasSkill && !parsed.hasExtension) return ["-ns", ...resolved];
-  return ["-ns", "-ne", ...resolved];
+  // An explicit -e/-s disables discovery for that resource type only. When
+  // neither is given, fall back to a fully isolated run (no discovery at all).
+  const discoveryFlags = [];
+  if (parsed.hasSkill || !parsed.hasExtension) discoveryFlags.push("-ns");
+  if (parsed.hasExtension || !parsed.hasSkill) discoveryFlags.push("-ne");
+  return [...discoveryFlags, ...resolved];
 }
 
 function shellQuote(argument) {
@@ -628,7 +630,7 @@ function shellQuote(argument) {
 function printHelp() {
   process.stdout.write(`Usage: pi-cli [options] [pi-options/messages...]\n\n`);
   process.stdout.write(`Runs pi with explicit resources and passes normal Pi arguments through.\n`);
-  process.stdout.write(`It adds -ns for skills, and -ns -ne for extensions, by default.\n\n`);
+  process.stdout.write(`It adds -ne when extensions are named and -ns when skills are named.\n\n`);
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  -e, --extension <name|path>  Load an extension (repeatable)\n`);
   process.stdout.write(`  -s, --skill <name|path>      Load a skill (repeatable)\n`);
