@@ -1,4 +1,4 @@
-# pi-command-cli
+# @lglen/pi-command-cli
 
 A small quality-of-life wrapper for launching Pi sessions. It passes normal Pi
 arguments through, adds `-ns -ne` for extension runs (or `-ns` for skill-only
@@ -82,7 +82,7 @@ partial matches (case-insensitive).
 From npm (global):
 
 ```bash
-npm install -g pi-command-cli
+npm install -g @lglen/pi-command-cli
 ```
 
 From a checkout (local development):
@@ -94,10 +94,13 @@ npm link
 Or run without installing:
 
 ```bash
-npx pi-command-cli -e pi-intercom
+npx @lglen/pi-command-cli -e pi-intercom
 ```
 
 ## Release
+
+The package is published publicly under the `@lglen` scope (`publishConfig.access`
+is set to `public`, so no `--access` flag is needed).
 
 ```bash
 npm login          # once per machine
