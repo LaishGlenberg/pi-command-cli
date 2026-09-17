@@ -1,17 +1,18 @@
 # @lglen/pi-command-cli
 
-A small quality-of-life wrapper for launching Pi sessions. It passes normal Pi
-arguments through, disables extension discovery (`-ne`) when extensions are named
-explicitly, disables skill discovery (`-ns`) when skills are named explicitly, and
-lets resource flags use names instead of absolute paths.
+A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary feature is extension and skill name resolution, you no longer need to refer to them with absolute paths. Contains a lot of helpful abstractions such as:
+
+- Automatically call `-ne` when using `-e` (same applies to `-s` with `-ns`, and `-t` with `-nbt`)
+- `-n` flag to kill ALL external context sources and tools
+- `-S` and `--import` options for saving and loading pi-cli startup options
 
 ```bash
 pi-cli -e pi-intercom
 pi-cli -e pi-intercom "inspect this project"
-pi-cli -e pi-intercom -e pi-mcp-adapter
+pi-cli -e pi-intercom,pi-mcp-adapter
 pi-cli -s playwright-cli
-pi-cli -s pi-intercom
-pi-cli -t read,bash
+pi-cli -s playwright-cli,pi-intercom
+pi-cli -t read,bash # manage non built in tools with -e
 ```
 
 The equivalent Pi invocation for the first example is:
@@ -67,7 +68,7 @@ pi-cli --import searcher
 # -i searcher is an alias for --import searcher
 ```
 
-Configurations are stored as plain command strings, so you can edit them by
+Configurations are stored as plain command strings in settings.json, so you can edit them by
 hand:
 
 ```json
@@ -95,24 +96,4 @@ From a checkout (local development):
 
 ```bash
 npm link
-```
-
-Or run without installing:
-
-```bash
-npx @lglen/pi-command-cli -e pi-intercom
-```
-
-## Release
-
-The package is published publicly under the `@lglen` scope (`publishConfig.access`
-is set to `public`, so no `--access` flag is needed).
-
-```bash
-npm login          # once per machine
-npm test
-npm pack --dry-run # inspect the published file list
-npm version patch  # or minor/major; bumps version and creates a git tag
-npm publish        # add --otp=<code> when npm 2FA is enabled
-git push --follow-tags
 ```
