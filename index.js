@@ -614,11 +614,12 @@ export function buildPiArguments(parsed, agentDir = process.env.PI_AGENT_DIR || 
   }
 
   if (!parsed.useDefaults) return resolved;
-  // An explicit -e/-s disables discovery for that resource type only. When
-  // neither is given, fall back to a fully isolated run (no discovery at all).
+  // Naming a resource disables Pi's automatic discovery for that resource
+  // type only. With no -e/-s flags, pi-cli is a transparent pass-through to
+  // pi and adds no discovery flags of its own.
   const discoveryFlags = [];
-  if (parsed.hasSkill || !parsed.hasExtension) discoveryFlags.push("-ns");
-  if (parsed.hasExtension || !parsed.hasSkill) discoveryFlags.push("-ne");
+  if (parsed.hasExtension) discoveryFlags.push("-ne");
+  if (parsed.hasSkill) discoveryFlags.push("-ns");
   return [...discoveryFlags, ...resolved];
 }
 
@@ -630,7 +631,8 @@ function shellQuote(argument) {
 function printHelp() {
   process.stdout.write(`Usage: pi-cli [options] [pi-options/messages...]\n\n`);
   process.stdout.write(`Runs pi with explicit resources and passes normal Pi arguments through.\n`);
-  process.stdout.write(`It adds -ne when extensions are named and -ns when skills are named.\n\n`);
+  process.stdout.write(`It adds -ne when extensions are named and -ns when skills are named.\n`);
+  process.stdout.write(`With no resources named it is equivalent to running pi directly.\n\n`);
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  -e, --extension <name|path>  Load an extension (repeatable)\n`);
   process.stdout.write(`  -s, --skill <name|path>      Load a skill (repeatable)\n`);
@@ -704,6 +706,23 @@ export function main(argv = process.argv.slice(2)) {
   }
 }
 
+let pipeErrorHandled = false;
+
+/**
+ * Exit quietly when a downstream consumer closes the pipe early, e.g.
+ * `pi-cli --help | head`. Without this, the async EPIPE is unhandled.
+ */
+function handlePipeErrors() {
+  if (pipeErrorHandled) return;
+  pipeErrorHandled = true;
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.on("error", (error) => {
+      if (error.code === "EPIPE") process.exit(0);
+      throw error;
+    });
+  }
+}
+
 let invokedPath = "";
 if (process.argv[1]) {
   try {
@@ -714,6 +733,7 @@ if (process.argv[1]) {
 }
 const modulePath = fileURLToPath(import.meta.url);
 if (invokedPath === modulePath) {
+  handlePipeErrors();
   const result = main();
   if (result !== undefined) process.exitCode = result;
 }

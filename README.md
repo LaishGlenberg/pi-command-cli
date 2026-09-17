@@ -23,8 +23,8 @@ pi -ne --extension "$HOME/.pi/agent/npm/node_modules/pi-intercom"
 
 Naming extensions only disables *extension* discovery, so your skills keep
 loading. Naming skills only disables *skill* discovery, so your extensions keep
-loading. Naming both disables both. Runs with no `-e`/`-s` flags keep the fully
-isolated default (`-ns -ne`).
+loading. Naming both disables both. Runs with no `-e`/`-s` flags are a
+transparent pass-through to `pi` and add no discovery flags of their own.
 
 Extension names are searched in:
 
@@ -44,8 +44,7 @@ pi -ns --skill "$HOME/.pi/agent/skills/playwright-cli.md"
 `pi-cli -s pi-intercom` resolves the skill directory shipped by the extension.
 
 Existing extension and skill paths continue to work. Use `--dry-run` to inspect
-the expanded command, `--no-defaults` when Pi's normal discovery should
-stay enabled, or `-n` / `--nothing` to start from a clean slate:
+the expanded command, or `-n` / `--nothing` to start from a clean slate:
 
 ```bash
 pi-cli -n

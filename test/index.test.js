@@ -280,21 +280,21 @@ test("expands tool allowlist flags and adds -nbt", async () => {
   const agentDir = await fixture();
   const parsed = parseArguments(["-t", "read,bash", "--tools=edit"]);
   assert.deepEqual(buildPiArguments(parsed, agentDir), [
-    "-ns", "-ne", "-nbt", "--tools", "read,bash", "--tools", "edit",
+    "-nbt", "--tools", "read,bash", "--tools", "edit",
   ]);
 });
 
 test("adds -nbt with combined short tool flag", () => {
   const parsed = parseArguments(["-tread"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-ns", "-ne", "-nbt", "--tools", "read",
+    "-nbt", "--tools", "read",
   ]);
 });
 
 test("does not add -nbt when no tools flag is present", () => {
   const parsed = parseArguments(["--model", "google/gemini"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-ns", "-ne", "--model", "google/gemini",
+    "--model", "google/gemini",
   ]);
 });
 
@@ -497,11 +497,11 @@ test("buildPiArguments adds only -ne when an extension is present but no skill",
   assert.deepEqual(buildPiArguments(parsed, agentDir), ["-ne", "--extension", extPath]);
 });
 
-test("buildPiArguments falls back to -ns -ne when no resources are named", () => {
+test("buildPiArguments adds no discovery flags when no resources are named", () => {
   const parsed = {
     piArguments: ["--model", "foo"], useDefaults: true, hasExtension: false, hasSkill: false,
   };
-  assert.deepEqual(buildPiArguments(parsed, "/tmp/any"), ["-ns", "-ne", "--model", "foo"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/any"), ["--model", "foo"]);
 });
 
 test("buildPiArguments adds only -ns when a skill is present but no extension", async () => {
@@ -514,7 +514,7 @@ test("buildPiArguments adds only -ns when a skill is present but no extension", 
   assert.deepEqual(buildPiArguments(parsed, agentDir), ["-ns", "--skill", skillPath]);
 });
 
-test("buildPiArguments adds -ns -ne when both extension and skill are present", async () => {
+test("buildPiArguments adds -ne -ns when both extension and skill are present", async () => {
   const agentDir = await fixture();
   const extPath = join(agentDir, "extensions", "local-extension");
   const skillPath = join(agentDir, "skills", "playwright-cli.md");
@@ -523,7 +523,7 @@ test("buildPiArguments adds -ns -ne when both extension and skill are present", 
     useDefaults: true, hasExtension: true, hasSkill: true,
   };
   assert.deepEqual(buildPiArguments(parsed, agentDir), [
-    "-ns", "-ne", "--extension", extPath, "--skill", skillPath,
+    "-ne", "-ns", "--extension", extPath, "--skill", skillPath,
   ]);
 });
 
