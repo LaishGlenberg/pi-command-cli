@@ -96,3 +96,7 @@ From a checkout (local development):
 ```bash
 npm link
 ```
+
+## Pi alias
+
+I recommend aliasing pi-cli under pi, use `pi --helpi` to access pi's --help message

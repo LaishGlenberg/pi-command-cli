@@ -15,6 +15,7 @@ import {
 import { fileURLToPath } from "node:url";
 import { dirname, extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { printHelpi } from "./pi-help-msg.js";
 
 const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
 const SETTINGS_FILENAME = "settings.json";
@@ -431,6 +432,10 @@ export function parseArguments(argv) {
       return { help: true };
     }
 
+    if (parseOptions && (argument === "--helpi" || argument === "-hp")) {
+      return { helpi: true };
+    }
+
     if (parseOptions && (argument === "--nothing" || argument === "-n")) {
       groups.add("nothing");
       useDefaults = false;
@@ -628,6 +633,8 @@ function shellQuote(argument) {
   return `'${argument.replaceAll("'", "'\\''")}'`;
 }
 
+
+
 function printHelp() {
   process.stdout.write(`Usage: pi-cli [options] [pi-options/messages...]\n\n`);
   process.stdout.write(`Runs pi with explicit resources and passes normal Pi arguments through.\n`);
@@ -656,6 +663,11 @@ export function main(argv = process.argv.slice(2)) {
     parsed = parseArguments(argv);
     if (parsed.help) {
       printHelp();
+      return 0;
+    }
+
+    if (parsed.helpi) {
+      printHelpi();
       return 0;
     }
 
@@ -706,23 +718,6 @@ export function main(argv = process.argv.slice(2)) {
   }
 }
 
-let pipeErrorHandled = false;
-
-/**
- * Exit quietly when a downstream consumer closes the pipe early, e.g.
- * `pi-cli --help | head`. Without this, the async EPIPE is unhandled.
- */
-function handlePipeErrors() {
-  if (pipeErrorHandled) return;
-  pipeErrorHandled = true;
-  for (const stream of [process.stdout, process.stderr]) {
-    stream.on("error", (error) => {
-      if (error.code === "EPIPE") process.exit(0);
-      throw error;
-    });
-  }
-}
-
 let invokedPath = "";
 if (process.argv[1]) {
   try {
@@ -733,7 +728,6 @@ if (process.argv[1]) {
 }
 const modulePath = fileURLToPath(import.meta.url);
 if (invokedPath === modulePath) {
-  handlePipeErrors();
   const result = main();
   if (result !== undefined) process.exitCode = result;
 }
