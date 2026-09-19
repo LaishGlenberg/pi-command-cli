@@ -83,6 +83,26 @@ When imported, the stored command is re-parsed from scratch, so extension and
 skill names are resolved again. Import searches exact names first, then unique
 partial matches (case-insensitive).
 
+## Project structure
+
+```
+index.js            Bin entry point (delegates to src/, re-exports the public API)
+src/
+  index.js          Barrel re-export of the public API
+  constants.js      Shared constants (agent dir, settings filename, extensions)
+  walk.js           Safe recursive directory walker
+  packages.js       package.json reading and extension-directory detection
+  matching.js       Path canonicalization and name-matching helpers
+  extensions.js     Extension name resolution
+  skills.js         Skill name resolution
+  settings.js       Low-level settings.json read/write
+  config.js         Saved pi-cli configurations (saveConfig/loadConfig)
+  arguments.js      CLI argument parsing and Pi argument building
+  help.js           pi-cli --help output
+  pi-help-msg.js    pi --helpi output
+  cli.js            main() orchestration and child process spawning
+```
+
 ## Install
 
 From npm (global):
