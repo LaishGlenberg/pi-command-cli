@@ -2,7 +2,7 @@
 
 A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary feature is extension and skill name resolution, you no longer need to refer to them with absolute paths. Contains a lot of helpful abstractions such as:
 
-- Automatically call `-ne` when using `-e` (same applies to `-s` with `-ns`, and `-t` with `-nbt`)
+- Automatically call `-ne` when using `-e` (same applies to `-s` with `-ns`)
 - `-n` flag to kill ALL external context sources and tools
 - `-S` and `--import` options for saving and loading pi-cli startup options
 

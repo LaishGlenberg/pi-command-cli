@@ -66,8 +66,7 @@ export function parseArguments(argv) {
     if (parseOptions && (argument === "--nothing" || argument === "-n")) {
       groups.add("nothing");
       useDefaults = false;
-      piArguments.push("-ne", "-ns", "-nc", "-np", "-nbt");
-      groups.add("nbt");
+      piArguments.push("-ne", "-ns", "-nc", "-np");
       continue;
     }
 
@@ -174,10 +173,6 @@ export function parseArguments(argv) {
 
     if (parseOptions && (argument === "--tools" || argument === "-t")) {
       groups.add("tools");
-      if (!groups.has("nbt")) {
-        groups.add("nbt");
-        piArguments.push("-nbt");
-      }
       const requested = argv[index + 1];
       if (requested === undefined) {
         throw new Error(`${argument} requires a tool allowlist`);
@@ -189,10 +184,6 @@ export function parseArguments(argv) {
 
     if (parseOptions && argument.startsWith("--tools=")) {
       groups.add("tools");
-      if (!groups.has("nbt")) {
-        groups.add("nbt");
-        piArguments.push("-nbt");
-      }
       const requested = argument.slice("--tools=".length);
       if (!requested) throw new Error("--tools requires a tool allowlist");
       piArguments.push("--tools", requested);
@@ -201,10 +192,6 @@ export function parseArguments(argv) {
 
     if (parseOptions && argument.startsWith("-t") && argument.length > 2) {
       groups.add("tools");
-      if (!groups.has("nbt")) {
-        groups.add("nbt");
-        piArguments.push("-nbt");
-      }
       piArguments.push("--tools", argument.slice(2));
       continue;
     }

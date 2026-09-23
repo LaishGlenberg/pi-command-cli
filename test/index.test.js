@@ -277,22 +277,22 @@ test("individual flags still work alongside comma-separated", async () => {
   ]);
 });
 
-test("expands tool allowlist flags and adds -nbt", async () => {
+test("expands tool allowlist flags", async () => {
   const agentDir = await fixture();
   const parsed = parseArguments(["-t", "read,bash", "--tools=edit"]);
   assert.deepEqual(buildPiArguments(parsed, agentDir), [
-    "-nbt", "--tools", "read,bash", "--tools", "edit",
+    "--tools", "read,bash", "--tools", "edit",
   ]);
 });
 
-test("adds -nbt with combined short tool flag", () => {
+test("expands combined short tool flag", () => {
   const parsed = parseArguments(["-tread"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-nbt", "--tools", "read",
+    "--tools", "read",
   ]);
 });
 
-test("does not add -nbt when no tools flag is present", () => {
+test("passes through flags without adding tool flags", () => {
   const parsed = parseArguments(["--model", "google/gemini"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
     "--model", "google/gemini",
@@ -306,17 +306,17 @@ test("supports opting out of the default discovery flags", () => {
   ]);
 });
 
-test("--nothing adds -ne -ns -nc -np -nbt and suppresses defaults", () => {
+test("--nothing adds -ne -ns -nc -np and suppresses defaults", () => {
   const parsed = parseArguments(["--nothing"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-ne", "-ns", "-nc", "-np", "-nbt",
+    "-ne", "-ns", "-nc", "-np",
   ]);
 });
 
 test("-n is a shorthand for --nothing", () => {
   const parsed = parseArguments(["-n"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-ne", "-ns", "-nc", "-np", "-nbt",
+    "-ne", "-ns", "-nc", "-np",
   ]);
 });
 
@@ -324,7 +324,7 @@ test("--nothing composes with -e", async () => {
   const agentDir = await fixture();
   const parsed = parseArguments(["-n", "-e", "pi-intercom"]);
   assert.deepEqual(buildPiArguments(parsed, agentDir), [
-    "-ne", "-ns", "-nc", "-np", "-nbt",
+    "-ne", "-ns", "-nc", "-np",
     "--extension", join(agentDir, "npm", "node_modules", "pi-intercom"),
   ]);
 });
@@ -333,7 +333,7 @@ test("--nothing composes with -s", async () => {
   const agentDir = await fixture();
   const parsed = parseArguments(["-n", "-s", "playwright-cli"]);
   assert.deepEqual(buildPiArguments(parsed, agentDir), [
-    "-ne", "-ns", "-nc", "-np", "-nbt",
+    "-ne", "-ns", "-nc", "-np",
     "--skill", join(agentDir, "skills", "playwright-cli.md"),
   ]);
 });
@@ -341,14 +341,14 @@ test("--nothing composes with -s", async () => {
 test("--nothing passes through positional arguments", () => {
   const parsed = parseArguments(["-n", "hello world"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-ne", "-ns", "-nc", "-np", "-nbt", "hello world",
+    "-ne", "-ns", "-nc", "-np", "hello world",
   ]);
 });
 
-test("-n with -t does not duplicate -nbt", () => {
+test("-n composes with -t", () => {
   const parsed = parseArguments(["-n", "-t", "read,bash"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-ne", "-ns", "-nc", "-np", "-nbt", "--tools", "read,bash",
+    "-ne", "-ns", "-nc", "-np", "--tools", "read,bash",
   ]);
 });
 
@@ -434,7 +434,7 @@ test("-s with attached value works", () => {
 
 test("-t with attached value works", () => {
   const parsed = parseArguments(["-tread,bash"]);
-  assert.deepEqual(parsed.piArguments, ["-nbt", "--tools", "read,bash"]);
+  assert.deepEqual(parsed.piArguments, ["--tools", "read,bash"]);
 });
 
 test("--extension without a value throws", () => {
