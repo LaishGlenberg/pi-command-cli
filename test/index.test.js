@@ -277,22 +277,82 @@ test("individual flags still work alongside comma-separated", async () => {
   ]);
 });
 
-test("expands tool allowlist flags and adds -nbt", async () => {
-  const agentDir = await fixture();
+test("passes tool allowlist flags through to pi unchanged", () => {
   const parsed = parseArguments(["-t", "read,bash", "--tools=edit"]);
-  assert.deepEqual(buildPiArguments(parsed, agentDir), [
-    "-nbt", "--tools", "read,bash", "--tools", "edit",
-  ]);
-});
-
-test("adds -nbt with combined short tool flag", () => {
-  const parsed = parseArguments(["-tread"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-nbt", "--tools", "read",
+    "-t", "read,bash", "--tools=edit",
   ]);
 });
 
-test("does not add -nbt when no tools flag is present", () => {
+test("passes combined short tool flags through to pi unchanged", () => {
+  const parsed = parseArguments(["-tread"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), ["-tread"]);
+});
+
+test("keeps only the named built-in tools via --exclude-tools", () => {
+  const parsed = parseArguments(["-bt", "bash,ls,grep"]);
+  assert.deepEqual(parsed.builtinTools, ["bash", "ls", "grep"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "--exclude-tools", "read,powershell,edit,write,find",
+  ]);
+});
+
+test("--built-in-tools with every built-in adds no exclude flag", () => {
+  const parsed = parseArguments(["--built-in-tools", "read,bash,powershell,edit,write,grep,find,ls"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), []);
+});
+
+test("local tool flags support equals, attached, and repeated forms", () => {
+  const parsed = parseArguments(["--built-in-tools=bash", "-btread", "-bt", "ls"]);
+  assert.deepEqual(parsed.builtinTools, ["bash", "read", "ls"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "--exclude-tools", "powershell,edit,write,grep,find",
+  ]);
+});
+
+test("-bt composes with -e and preserves extension tools", async () => {
+  const agentDir = await fixture();
+  const parsed = parseArguments(["-e", "pi-intercom", "-bt", "bash"]);
+  assert.deepEqual(buildPiArguments(parsed, agentDir), [
+    "-ne",
+    "--exclude-tools", "read,powershell,edit,write,grep,find,ls",
+    "--extension", join(agentDir, "npm", "node_modules", "pi-intercom"),
+  ]);
+});
+
+test("-bt composes with -n", () => {
+  const parsed = parseArguments(["-n", "-bt", "bash"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "--exclude-tools", "read,powershell,edit,write,grep,find,ls",
+    "-ne", "-ns", "-nc", "-np",
+  ]);
+});
+
+test("-bt rejects unknown built-in tools", () => {
+  assert.throws(() => parseArguments(["-bt", "bogus"]), {
+    message: /unknown built-in tool: bogus/,
+  });
+});
+
+test("--built-in-tools without a value throws", () => {
+  assert.throws(() => parseArguments(["--built-in-tools"]), {
+    message: "--built-in-tools requires a comma-separated list of built-in tools",
+  });
+});
+
+test("-bt without a value throws", () => {
+  assert.throws(() => parseArguments(["-bt"]), {
+    message: "-bt requires a comma-separated list of built-in tools",
+  });
+});
+
+test("--built-in-tools= with an empty value throws", () => {
+  assert.throws(() => parseArguments(["--built-in-tools="]), {
+    message: "--built-in-tools requires a comma-separated list of built-in tools",
+  });
+});
+
+test("passes through flags without adding tool flags", () => {
   const parsed = parseArguments(["--model", "google/gemini"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
     "--model", "google/gemini",
@@ -306,17 +366,17 @@ test("supports opting out of the default discovery flags", () => {
   ]);
 });
 
-test("--nothing adds -ne -ns -nc -np -nbt and suppresses defaults", () => {
+test("--nothing adds -ne -ns -nc -np and suppresses defaults", () => {
   const parsed = parseArguments(["--nothing"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-ne", "-ns", "-nc", "-np", "-nbt",
+    "-ne", "-ns", "-nc", "-np",
   ]);
 });
 
 test("-n is a shorthand for --nothing", () => {
   const parsed = parseArguments(["-n"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-ne", "-ns", "-nc", "-np", "-nbt",
+    "-ne", "-ns", "-nc", "-np",
   ]);
 });
 
@@ -324,7 +384,7 @@ test("--nothing composes with -e", async () => {
   const agentDir = await fixture();
   const parsed = parseArguments(["-n", "-e", "pi-intercom"]);
   assert.deepEqual(buildPiArguments(parsed, agentDir), [
-    "-ne", "-ns", "-nc", "-np", "-nbt",
+    "-ne", "-ns", "-nc", "-np",
     "--extension", join(agentDir, "npm", "node_modules", "pi-intercom"),
   ]);
 });
@@ -333,7 +393,7 @@ test("--nothing composes with -s", async () => {
   const agentDir = await fixture();
   const parsed = parseArguments(["-n", "-s", "playwright-cli"]);
   assert.deepEqual(buildPiArguments(parsed, agentDir), [
-    "-ne", "-ns", "-nc", "-np", "-nbt",
+    "-ne", "-ns", "-nc", "-np",
     "--skill", join(agentDir, "skills", "playwright-cli.md"),
   ]);
 });
@@ -341,14 +401,14 @@ test("--nothing composes with -s", async () => {
 test("--nothing passes through positional arguments", () => {
   const parsed = parseArguments(["-n", "hello world"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-ne", "-ns", "-nc", "-np", "-nbt", "hello world",
+    "-ne", "-ns", "-nc", "-np", "hello world",
   ]);
 });
 
-test("-n with -t does not duplicate -nbt", () => {
+test("-n composes with -t", () => {
   const parsed = parseArguments(["-n", "-t", "read,bash"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-ne", "-ns", "-nc", "-np", "-nbt", "--tools", "read,bash",
+    "-ne", "-ns", "-nc", "-np", "-t", "read,bash",
   ]);
 });
 
@@ -432,9 +492,9 @@ test("-s with attached value works", () => {
   assert.deepEqual(parsed.piArguments, ["--skill", "my-skill"]);
 });
 
-test("-t with attached value works", () => {
+test("-t with attached value passes through", () => {
   const parsed = parseArguments(["-tread,bash"]);
-  assert.deepEqual(parsed.piArguments, ["-nbt", "--tools", "read,bash"]);
+  assert.deepEqual(parsed.piArguments, ["-tread,bash"]);
 });
 
 test("--extension without a value throws", () => {
@@ -449,10 +509,9 @@ test("--skill without a value throws", () => {
   });
 });
 
-test("--tools without a value throws", () => {
-  assert.throws(() => parseArguments(["--tools"]), {
-    message: "--tools requires a tool allowlist",
-  });
+test("--tools is passed through without pi-cli validating it", () => {
+  const parsed = parseArguments(["--tools"]);
+  assert.deepEqual(parsed.piArguments, ["--tools"]);
 });
 
 test("-- stops option parsing", () => {

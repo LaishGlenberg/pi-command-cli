@@ -1,4 +1,4 @@
-import { DEFAULT_AGENT_DIR } from "./constants.js";
+import { BUILTIN_TOOLS, DEFAULT_AGENT_DIR } from "./constants.js";
 import { resolveExtension } from "./extensions.js";
 import { resolveSkill } from "./skills.js";
 
@@ -31,10 +31,26 @@ export function mergeParsedArguments(saved, current) {
     useDefaults: saved.useDefaults && current.useDefaults,
     hasExtension: saved.hasExtension || current.hasExtension,
     hasSkill: saved.hasSkill || current.hasSkill,
-    hasTools: saved.hasTools || current.hasTools,
+    builtinTools: [...new Set([...(saved.builtinTools ?? []), ...(current.builtinTools ?? [])])],
     nothing: saved.nothing || current.nothing,
     dryRun: saved.dryRun || current.dryRun,
   };
+}
+
+function addBuiltinTools(builtinTools, requested, flag) {
+  const names = requested
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  if (names.length === 0) {
+    throw new Error(`${flag} requires a comma-separated list of built-in tools`);
+  }
+  for (const name of names) {
+    if (!BUILTIN_TOOLS.includes(name)) {
+      throw new Error(`unknown built-in tool: ${name}\nvalid tools: ${BUILTIN_TOOLS.join(", ")}`);
+    }
+    builtinTools.add(name);
+  }
 }
 
 export function parseArguments(argv) {
@@ -42,6 +58,7 @@ export function parseArguments(argv) {
   let parseOptions = true;
   let useDefaults = true;
   const groups = new Set();
+  const builtinTools = new Set();
   let saveName;
   let importName;
   let dryRun = false;
@@ -66,13 +83,33 @@ export function parseArguments(argv) {
     if (parseOptions && (argument === "--nothing" || argument === "-n")) {
       groups.add("nothing");
       useDefaults = false;
-      piArguments.push("-ne", "-ns", "-nc", "-np", "-nbt");
-      groups.add("nbt");
+      piArguments.push("-ne", "-ns", "-nc", "-np");
       continue;
     }
 
     if (parseOptions && argument === "--dry-run") {
       dryRun = true;
+      continue;
+    }
+
+    if (parseOptions && (argument === "--built-in-tools" || argument === "-bt")) {
+      const requested = argv[index + 1];
+      if (requested === undefined) {
+        throw new Error(`${argument} requires a comma-separated list of built-in tools`);
+      }
+      addBuiltinTools(builtinTools, requested, argument);
+      index += 1;
+      continue;
+    }
+
+    if (parseOptions && argument.startsWith("--built-in-tools=")) {
+      addBuiltinTools(builtinTools, argument.slice("--built-in-tools=".length), "--built-in-tools");
+      continue;
+    }
+
+    if (parseOptions && argument.startsWith("-bt") && argument.length > 3) {
+      const requested = argument.startsWith("-bt=") ? argument.slice(4) : argument.slice(3);
+      addBuiltinTools(builtinTools, requested, "-bt");
       continue;
     }
 
@@ -172,43 +209,6 @@ export function parseArguments(argv) {
       continue;
     }
 
-    if (parseOptions && (argument === "--tools" || argument === "-t")) {
-      groups.add("tools");
-      if (!groups.has("nbt")) {
-        groups.add("nbt");
-        piArguments.push("-nbt");
-      }
-      const requested = argv[index + 1];
-      if (requested === undefined) {
-        throw new Error(`${argument} requires a tool allowlist`);
-      }
-      piArguments.push("--tools", requested);
-      index += 1;
-      continue;
-    }
-
-    if (parseOptions && argument.startsWith("--tools=")) {
-      groups.add("tools");
-      if (!groups.has("nbt")) {
-        groups.add("nbt");
-        piArguments.push("-nbt");
-      }
-      const requested = argument.slice("--tools=".length);
-      if (!requested) throw new Error("--tools requires a tool allowlist");
-      piArguments.push("--tools", requested);
-      continue;
-    }
-
-    if (parseOptions && argument.startsWith("-t") && argument.length > 2) {
-      groups.add("tools");
-      if (!groups.has("nbt")) {
-        groups.add("nbt");
-        piArguments.push("-nbt");
-      }
-      piArguments.push("--tools", argument.slice(2));
-      continue;
-    }
-
     piArguments.push(argument);
   }
 
@@ -217,7 +217,7 @@ export function parseArguments(argv) {
     useDefaults,
     hasExtension: groups.has("extension"),
     hasSkill: groups.has("skill"),
-    hasTools: groups.has("tools"),
+    builtinTools: [...builtinTools],
     nothing: groups.has("nothing"),
     saveName,
     importName,
@@ -245,12 +245,18 @@ export function buildPiArguments(parsed, agentDir = process.env.PI_AGENT_DIR || 
     }
   }
 
-  if (!parsed.useDefaults) return resolved;
+  const toolFlags = [];
+  if (parsed.builtinTools && parsed.builtinTools.length > 0) {
+    const excluded = BUILTIN_TOOLS.filter((name) => !parsed.builtinTools.includes(name));
+    if (excluded.length > 0) toolFlags.push("--exclude-tools", excluded.join(","));
+  }
+
+  if (!parsed.useDefaults) return [...toolFlags, ...resolved];
   // Naming a resource disables Pi's automatic discovery for that resource
   // type only. With no -e/-s flags, pi-cli is a transparent pass-through to
   // pi and adds no discovery flags of its own.
   const discoveryFlags = [];
   if (parsed.hasExtension) discoveryFlags.push("-ne");
   if (parsed.hasSkill) discoveryFlags.push("-ns");
-  return [...discoveryFlags, ...resolved];
+  return [...discoveryFlags, ...toolFlags, ...resolved];
 }
