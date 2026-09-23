@@ -55,7 +55,7 @@ npm run lint
 Linting uses [Oxlint](https://oxc.rs/docs/guide/usage/linter.html), configured
 in `.oxlintrc.json` with its correctness rules enabled; warnings fail the check.
 GitHub Actions runs tests and linting on pushes and pull requests to `main` with
-Node.js 18, 20, and 22.
+Node.js 24.
 
 ## Extensions / Skill Loading
 
