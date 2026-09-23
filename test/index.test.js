@@ -19,8 +19,6 @@ import { buildSpawnSpec, windowsQuote } from "../src/cli.js";
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const PI_CLI_KEY = "piCli";
-
 async function fixture() {
   const agentDir = await mkdtemp(join(tmpdir(), "pi-command-cli-"));
   await mkdir(join(agentDir, "npm", "node_modules", "pi-intercom", "skills", "pi-intercom"), {

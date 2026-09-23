@@ -42,6 +42,21 @@ npm install
 npm link
 ```
 
+## Development and CI
+
+Install the development dependencies and run the checks locally:
+
+```bash
+npm ci
+npm test
+npm run lint
+```
+
+Linting uses [Oxlint](https://oxc.rs/docs/guide/usage/linter.html), configured
+in `.oxlintrc.json` with its correctness rules enabled; warnings fail the check.
+GitHub Actions runs tests and linting on pushes and pull requests to `main` with
+Node.js 18, 20, and 22.
+
 ## Extensions / Skill Loading
 
 Naming extensions only disables *extension* discovery, so your skills keep
