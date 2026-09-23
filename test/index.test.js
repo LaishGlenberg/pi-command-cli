@@ -277,19 +277,16 @@ test("individual flags still work alongside comma-separated", async () => {
   ]);
 });
 
-test("expands tool allowlist flags", async () => {
-  const agentDir = await fixture();
+test("passes tool allowlist flags through to pi unchanged", () => {
   const parsed = parseArguments(["-t", "read,bash", "--tools=edit"]);
-  assert.deepEqual(buildPiArguments(parsed, agentDir), [
-    "--tools", "read,bash", "--tools", "edit",
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "-t", "read,bash", "--tools=edit",
   ]);
 });
 
-test("expands combined short tool flag", () => {
+test("passes combined short tool flags through to pi unchanged", () => {
   const parsed = parseArguments(["-tread"]);
-  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "--tools", "read",
-  ]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), ["-tread"]);
 });
 
 test("passes through flags without adding tool flags", () => {
@@ -348,7 +345,7 @@ test("--nothing passes through positional arguments", () => {
 test("-n composes with -t", () => {
   const parsed = parseArguments(["-n", "-t", "read,bash"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
-    "-ne", "-ns", "-nc", "-np", "--tools", "read,bash",
+    "-ne", "-ns", "-nc", "-np", "-t", "read,bash",
   ]);
 });
 
@@ -432,9 +429,9 @@ test("-s with attached value works", () => {
   assert.deepEqual(parsed.piArguments, ["--skill", "my-skill"]);
 });
 
-test("-t with attached value works", () => {
+test("-t with attached value passes through", () => {
   const parsed = parseArguments(["-tread,bash"]);
-  assert.deepEqual(parsed.piArguments, ["--tools", "read,bash"]);
+  assert.deepEqual(parsed.piArguments, ["-tread,bash"]);
 });
 
 test("--extension without a value throws", () => {
@@ -449,10 +446,9 @@ test("--skill without a value throws", () => {
   });
 });
 
-test("--tools without a value throws", () => {
-  assert.throws(() => parseArguments(["--tools"]), {
-    message: "--tools requires a tool allowlist",
-  });
+test("--tools is passed through without pi-cli validating it", () => {
+  const parsed = parseArguments(["--tools"]);
+  assert.deepEqual(parsed.piArguments, ["--tools"]);
 });
 
 test("-- stops option parsing", () => {

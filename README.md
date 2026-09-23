@@ -12,7 +12,6 @@ pi-cli -e pi-intercom "inspect this project"
 pi-cli -e pi-intercom,pi-mcp-adapter
 pi-cli -s playwright-cli
 pi-cli -s playwright-cli,pi-intercom
-pi-cli -t read,bash # manage non built in tools with -e
 ```
 
 The equivalent Pi invocation for the first example is:

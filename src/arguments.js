@@ -31,7 +31,6 @@ export function mergeParsedArguments(saved, current) {
     useDefaults: saved.useDefaults && current.useDefaults,
     hasExtension: saved.hasExtension || current.hasExtension,
     hasSkill: saved.hasSkill || current.hasSkill,
-    hasTools: saved.hasTools || current.hasTools,
     nothing: saved.nothing || current.nothing,
     dryRun: saved.dryRun || current.dryRun,
   };
@@ -171,31 +170,6 @@ export function parseArguments(argv) {
       continue;
     }
 
-    if (parseOptions && (argument === "--tools" || argument === "-t")) {
-      groups.add("tools");
-      const requested = argv[index + 1];
-      if (requested === undefined) {
-        throw new Error(`${argument} requires a tool allowlist`);
-      }
-      piArguments.push("--tools", requested);
-      index += 1;
-      continue;
-    }
-
-    if (parseOptions && argument.startsWith("--tools=")) {
-      groups.add("tools");
-      const requested = argument.slice("--tools=".length);
-      if (!requested) throw new Error("--tools requires a tool allowlist");
-      piArguments.push("--tools", requested);
-      continue;
-    }
-
-    if (parseOptions && argument.startsWith("-t") && argument.length > 2) {
-      groups.add("tools");
-      piArguments.push("--tools", argument.slice(2));
-      continue;
-    }
-
     piArguments.push(argument);
   }
 
@@ -204,7 +178,6 @@ export function parseArguments(argv) {
     useDefaults,
     hasExtension: groups.has("extension"),
     hasSkill: groups.has("skill"),
-    hasTools: groups.has("tools"),
     nothing: groups.has("nothing"),
     saveName,
     importName,

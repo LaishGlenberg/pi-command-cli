@@ -7,7 +7,6 @@ export function printHelp() {
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  -e, --extension <name|path>  Load an extension (repeatable)\n`);
   process.stdout.write(`  -s, --skill <name|path>      Load a skill (repeatable)\n`);
-  process.stdout.write(`  -t, --tools <tools>          Comma-separated tool allowlist\n`);
   process.stdout.write(`  -i, --import <search>        Load a saved configuration\n`);
   process.stdout.write(`  -S, --save <name>            Save this configuration and exit\n`);
   process.stdout.write(`  --no-defaults                Do not add default discovery flags\n`);
