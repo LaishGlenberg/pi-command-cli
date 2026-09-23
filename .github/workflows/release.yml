@@ -1,0 +1,48 @@
+name: Create release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for a version change
+        id: version
+        shell: bash
+        run: |
+          current_version=$(node -p "require('./package.json').version")
+          previous_version=""
+          if git cat-file -e "${{ github.event.before }}:package.json" 2>/dev/null; then
+            previous_version=$(git show "${{ github.event.before }}:package.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
+          fi
+
+          if [ "$current_version" = "$previous_version" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "package.json version is unchanged ($current_version); skipping release"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "tag=v$current_version" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag and GitHub release
+        if: steps.version.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ github.event.repository.name }}/${{ steps.version.outputs.tag }} New Release
+          generate_release_notes: true

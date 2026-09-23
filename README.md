@@ -22,6 +22,25 @@ The equivalent Pi invocation for the first example is:
 pi -ne --extension "$HOME/.pi/agent/npm/node_modules/pi-intercom"
 ```
 
+## Install
+
+From npm (global):
+
+```bash
+npm install -g @lglen/pi-command-cli
+```
+
+From a checkout (local development):
+
+```bash
+git clone https://github.com/LaishGlenberg/awk-changelog-tool.git
+cd awk-changelog-tool
+npm install
+npm link
+```
+
+## Extensions / Skill Loading
+
 Naming extensions only disables *extension* discovery, so your skills keep
 loading. Naming skills only disables *skill* discovery, so your extensions keep
 loading. Naming both disables both. Runs with no `-e`/`-s` flags are a
@@ -130,20 +149,6 @@ src/
   help.js           pi-cli --help output
   pi-help-msg.js    pi --helpi output
   cli.js            main() orchestration and child process spawning
-```
-
-## Install
-
-From npm (global):
-
-```bash
-npm install -g @lglen/pi-command-cli
-```
-
-From a checkout (local development):
-
-```bash
-npm link
 ```
 
 ## Windows
