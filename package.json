@@ -1,6 +1,6 @@
 {
   "name": "@lglen/pi-command-cli",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "QoL node cli for spawning pi sessions in the tui",
   "license": "MIT",
   "author": "lglen",
