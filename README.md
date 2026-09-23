@@ -1,5 +1,8 @@
 # @lglen/pi-command-cli
 
+[![npm version](https://img.shields.io/npm/v/@lglen/pi-command-cli?label=npm&logo=npm&logoColor=red&labelColor=white&color=lightgrey&style=flat-square)](https://www.npmjs.com/package/@lglen/pi-command-cli)
+
+
 A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary feature is extension and skill name resolution, you no longer need to refer to them with absolute paths. Contains a lot of helpful abstractions such as:
 
 - Automatically call `-ne` when using `-e` (same applies to `-s` with `-ns`)
