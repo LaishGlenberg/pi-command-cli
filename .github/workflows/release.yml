@@ -35,14 +35,21 @@ jobs:
             exit 0
           fi
 
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "tag=v$current_version" >> "$GITHUB_OUTPUT"
+          tag="v$current_version"
+          git fetch --tags --force
 
-      - name: Create tag and GitHub release
+          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag does not exist. Push it (git push origin $tag) before merging this version bump."
+            exit 1
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release for the existing tag
         if: steps.version.outputs.changed == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          target_commitish: ${{ github.sha }}
           name: ${{ github.event.repository.name }}/${{ steps.version.outputs.tag }} New Release
           generate_release_notes: true
