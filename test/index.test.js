@@ -289,6 +289,69 @@ test("passes combined short tool flags through to pi unchanged", () => {
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), ["-tread"]);
 });
 
+test("keeps only the named built-in tools via --exclude-tools", () => {
+  const parsed = parseArguments(["-bt", "bash,ls,grep"]);
+  assert.deepEqual(parsed.builtinTools, ["bash", "ls", "grep"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "--exclude-tools", "read,powershell,edit,write,find",
+  ]);
+});
+
+test("--built-in-tools with every built-in adds no exclude flag", () => {
+  const parsed = parseArguments(["--built-in-tools", "read,bash,powershell,edit,write,grep,find,ls"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), []);
+});
+
+test("local tool flags support equals, attached, and repeated forms", () => {
+  const parsed = parseArguments(["--built-in-tools=bash", "-btread", "-bt", "ls"]);
+  assert.deepEqual(parsed.builtinTools, ["bash", "read", "ls"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "--exclude-tools", "powershell,edit,write,grep,find",
+  ]);
+});
+
+test("-bt composes with -e and preserves extension tools", async () => {
+  const agentDir = await fixture();
+  const parsed = parseArguments(["-e", "pi-intercom", "-bt", "bash"]);
+  assert.deepEqual(buildPiArguments(parsed, agentDir), [
+    "-ne",
+    "--exclude-tools", "read,powershell,edit,write,grep,find,ls",
+    "--extension", join(agentDir, "npm", "node_modules", "pi-intercom"),
+  ]);
+});
+
+test("-bt composes with -n", () => {
+  const parsed = parseArguments(["-n", "-bt", "bash"]);
+  assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
+    "--exclude-tools", "read,powershell,edit,write,grep,find,ls",
+    "-ne", "-ns", "-nc", "-np",
+  ]);
+});
+
+test("-bt rejects unknown built-in tools", () => {
+  assert.throws(() => parseArguments(["-bt", "bogus"]), {
+    message: /unknown built-in tool: bogus/,
+  });
+});
+
+test("--built-in-tools without a value throws", () => {
+  assert.throws(() => parseArguments(["--built-in-tools"]), {
+    message: "--built-in-tools requires a comma-separated list of built-in tools",
+  });
+});
+
+test("-bt without a value throws", () => {
+  assert.throws(() => parseArguments(["-bt"]), {
+    message: "-bt requires a comma-separated list of built-in tools",
+  });
+});
+
+test("--built-in-tools= with an empty value throws", () => {
+  assert.throws(() => parseArguments(["--built-in-tools="]), {
+    message: "--built-in-tools requires a comma-separated list of built-in tools",
+  });
+});
+
 test("passes through flags without adding tool flags", () => {
   const parsed = parseArguments(["--model", "google/gemini"]);
   assert.deepEqual(buildPiArguments(parsed, "/tmp/unused-agent"), [
