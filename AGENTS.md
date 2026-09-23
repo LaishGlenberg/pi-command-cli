@@ -129,6 +129,10 @@ committed artifact.
   `PI_AGENT_DIR` / `PI_BIN`.
 - Prefer asserting on `parseArguments` output and `buildPiArguments` output
   rather than spawning pi. `main()` tests capture stdout/stderr and set env.
+- `test/npm-install.test.js` is an integration test: it runs `npm pack`, installs
+  the tarball into a throwaway global prefix, and runs the installed `pi-cli`
+  bin. Keep it in sync when `files`, `bin`, or the entry point change. It skips
+  when npm is missing and needs no network (zero dependencies).
 - Run `node --test` before finishing; the suite is fast and must stay green.
 
 ## Documentation
