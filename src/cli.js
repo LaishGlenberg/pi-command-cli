@@ -15,6 +15,44 @@ export function shellQuote(argument) {
   return `'${argument.replaceAll("'", "'\\''")}'`;
 }
 
+/**
+ * Quote a single argument for a `cmd.exe /c` command line. The target process
+ * parses the line with MSVCRT rules, so backslashes before a quote (and before
+ * the closing quote) must be doubled. Note that cmd still expands `%VAR%`
+ * inside quotes; that is inherent to running the command through cmd.
+ */
+export function windowsQuote(argument) {
+  if (argument === "") return '""';
+  if (!/[\s"&|<>^()%!]/.test(argument)) return argument;
+  const escaped = argument
+    .replace(/(\\*)"/g, '$1$1\\"')
+    .replace(/(\\+)$/, "$1$1");
+  return `"${escaped}"`;
+}
+
+/**
+ * Build the spawn file/args for the current platform. On Windows, npm shims
+ * like `pi.cmd` cannot be spawned directly, so the command is run through
+ * `cmd.exe /d /s /c`. `windowsVerbatimArguments` stops Node from re-quoting
+ * the command line we assembled ourselves.
+ */
+export function buildSpawnSpec(
+  command,
+  args,
+  platform = process.platform,
+  comspec = process.env.ComSpec,
+) {
+  if (platform !== "win32") {
+    return { file: command, args: [...args], options: {} };
+  }
+  const line = [command, ...args].map(windowsQuote).join(" ");
+  return {
+    file: comspec || "cmd.exe",
+    args: ["/d", "/s", "/c", `"${line}"`],
+    options: { windowsVerbatimArguments: true },
+  };
+}
+
 export function main(argv = process.argv.slice(2)) {
   let parsed;
   try {
@@ -57,7 +95,8 @@ export function main(argv = process.argv.slice(2)) {
       return 0;
     }
 
-    const child = spawn(piCommand, piArguments, { stdio: "inherit" });
+    const spec = buildSpawnSpec(piCommand, piArguments);
+    const child = spawn(spec.file, spec.args, { stdio: "inherit", ...spec.options });
     child.on("error", (error) => {
       process.stderr.write(`pi-cli: unable to run ${piCommand}: ${error.message}\n`);
       process.exitCode = 127;

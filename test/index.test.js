@@ -13,6 +13,7 @@ import {
   resolveSkill,
   saveConfig,
 } from "../index.js";
+import { buildSpawnSpec, windowsQuote } from "../src/cli.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -752,6 +753,67 @@ test("main returns 1 when --save is used with an invalid name", async () => {
     main(["--save", "a/b"]),
   );
   assert.equal(result, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Spawn spec
+// ---------------------------------------------------------------------------
+
+test("buildSpawnSpec passes the command through on POSIX", () => {
+  const spec = buildSpawnSpec("pi", ["-ne", "--extension", "/tmp/ext"], "linux");
+  assert.deepEqual(spec, {
+    file: "pi",
+    args: ["-ne", "--extension", "/tmp/ext"],
+    options: {},
+  });
+});
+
+test("buildSpawnSpec runs the command through cmd.exe on Windows", () => {
+  const spec = buildSpawnSpec(
+    "pi",
+    ["-ne", "--extension", "C:\\Users\\u\\.pi\\x"],
+    "win32",
+    "C:\\Windows\\System32\\cmd.exe",
+  );
+  assert.equal(spec.file, "C:\\Windows\\System32\\cmd.exe");
+  assert.deepEqual(spec.args, [
+    "/d",
+    "/s",
+    "/c",
+    '"pi -ne --extension C:\\Users\\u\\.pi\\x"',
+  ]);
+  assert.equal(spec.options.windowsVerbatimArguments, true);
+});
+
+test("buildSpawnSpec quotes a command path with spaces on Windows", () => {
+  const spec = buildSpawnSpec(
+    "C:\\Program Files\\pi\\pi.cmd",
+    ["--version"],
+    "win32",
+    "cmd.exe",
+  );
+  assert.deepEqual(spec.args, [
+    "/d",
+    "/s",
+    "/c",
+    '""C:\\Program Files\\pi\\pi.cmd" --version"',
+  ]);
+});
+
+test("windowsQuote leaves simple arguments untouched", () => {
+  assert.equal(windowsQuote("pi-intercom"), "pi-intercom");
+  assert.equal(windowsQuote("C:\\Users\\u\\.pi"), "C:\\Users\\u\\.pi");
+});
+
+test("windowsQuote quotes arguments with spaces or cmd metacharacters", () => {
+  assert.equal(windowsQuote("hello world"), '"hello world"');
+  assert.equal(windowsQuote("a&b"), '"a&b"');
+  assert.equal(windowsQuote(""), '""');
+});
+
+test("windowsQuote escapes inner quotes and trailing backslashes", () => {
+  assert.equal(windowsQuote('say "hi"'), '"say \\"hi\\""');
+  assert.equal(windowsQuote("C:\\some path\\"), '"C:\\some path\\\\"');
 });
 
 // ---------------------------------------------------------------------------

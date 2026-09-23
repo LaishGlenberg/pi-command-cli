@@ -54,7 +54,8 @@ pi-cli -n -e pi-intercom
 # kills all extensions/skills/computer/playwright, then loads pi-intercom
 ```
 
-Set `PI_BIN` to use a different Pi executable.
+Set `PI_BIN` to use a different Pi executable. Paths with spaces work on
+Windows too (`C:\Program Files\...\pi.cmd`).
 
 Save named configurations in `~/.pi/agent/settings.json` (the same file Pi
 uses for its own settings, under a `piCli` key):
@@ -117,6 +118,27 @@ From a checkout (local development):
 npm link
 ```
 
+## Windows
+
+Windows is supported. npm installs `pi` as a `pi.cmd` shim, which Node cannot
+spawn directly, so pi-cli runs the command through `cmd.exe` and quotes the
+arguments itself. Prompts containing spaces, quotes, `&` or trailing
+backslashes are passed through intact. The one caveat of going through
+`cmd.exe`: a `%VAR%` pair in an argument is expanded, as it would be on any
+cmd command line.
+
 ## Pi alias
 
 I recommend aliasing pi-cli under pi, use `pi --helpi` to access pi's --help message
+
+Git Bash / bash:
+
+```bash
+alias pi=pi-cli
+```
+
+PowerShell:
+
+```powershell
+Set-Alias pi pi-cli
+```
