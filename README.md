@@ -37,9 +37,10 @@ npm install -g @lglen/pi-command-cli
 From a checkout (local development):
 
 ```bash
-git clone https://github.com/LaishGlenberg/awk-changelog-tool.git
-cd awk-changelog-tool
+git clone https://github.com/LaishGlenberg/pi-command-cli.git
+cd pi-command-cli
 npm install
+npm run build
 npm link
 ```
 
@@ -51,12 +52,19 @@ Install the development dependencies and run the checks locally:
 npm ci
 npm test
 npm run lint
+npm run typecheck
+npm run build
 ```
+
+The sources and tests are TypeScript. `npm test` runs the `.ts` sources directly
+using Node's built-in type stripping, so no build is needed for the inner loop.
+`npm run build` compiles them to `dist/` for publishing, and `npm run typecheck`
+checks types without emitting.
 
 Linting uses [Oxlint](https://oxc.rs/docs/guide/usage/linter.html), configured
 in `.oxlintrc.json` with its correctness rules enabled; warnings fail the check.
-GitHub Actions runs tests and linting on pushes and pull requests to `main` with
-Node.js 24.
+GitHub Actions runs tests, linting, type-checking, and the build on pushes and
+pull requests to `main` with Node.js 24.
 
 ## Extensions / Skill Loading
 
@@ -218,26 +226,27 @@ partial matches (case-insensitive).
 ## Project structure
 
 ```
-index.js            Bin entry point (delegates to src/, re-exports the public API)
+index.ts            Bin entry point (delegates to src/, re-exports the public API)
 src/
-  index.js          Barrel re-export of the public API
-  constants.js      Shared constants (agent dir, settings filename, extensions)
+  index.ts          Barrel re-export of the public API
+  constants.ts      Shared constants (agent dir, settings filename, extensions)
   cli/
-    main.js         main() orchestration and child process spawning
-    arguments.js    CLI argument parsing, Pi argument building
-    options.js      Option table and matching
-    custom.js       --custom expansion into arguments
-    help.js         pi-cli --help output
-    pi-help-msg.js  pi --helpi output
+    main.ts         main() orchestration and child process spawning
+    arguments.ts    CLI argument parsing, Pi argument building
+    options.ts      Option table and matching
+    custom.ts       --custom expansion into arguments
+    help.ts         pi-cli --help output
+    pi-help-msg.ts  pi --helpi output
   resolve/
-    walk.js         Safe recursive directory walker
-    packages.js     package.json reading and extension-directory detection
-    matching.js     Path canonicalization and name-matching helpers
-    extensions.js   Extension name resolution
-    skills.js       Skill name resolution
+    walk.ts         Safe recursive directory walker
+    packages.ts     package.json reading and extension-directory detection
+    matching.ts     Path canonicalization and name-matching helpers
+    extensions.ts   Extension name resolution
+    skills.ts       Skill name resolution
   config/
-    settings.js     Low-level settings.json read/write
-    config.js       Saved pi-cli configurations + piCli.custom fixtures
+    settings.ts     Low-level settings.json read/write
+    config.ts       Saved pi-cli configurations + piCli.custom fixtures
+dist/               Compiled JavaScript published to npm (generated, gitignored)
 ```
 
 ## Windows

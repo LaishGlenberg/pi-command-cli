@@ -1,10 +1,20 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { DEFAULT_AGENT_DIR } from "../constants.js";
-import { addMatch, sourceNameMatches } from "./matching.js";
-import { isPiPackage, looksLikeExtensionDirectory, packageNameMatches, readPackageJson } from "./packages.js";
-import { walkEntries } from "./walk.js";
+import { DEFAULT_AGENT_DIR } from "../constants.ts";
+import { addMatch, sourceNameMatches } from "./matching.ts";
+import {
+  isPiPackage,
+  looksLikeExtensionDirectory,
+  packageNameMatches,
+  readPackageJson,
+} from "./packages.ts";
+import { walkEntries } from "./walk.ts";
+
+interface SearchRoot {
+  path: string;
+  kind: "npm" | "git" | "extensions";
+}
 
 /**
  * Resolve an extension name to the path Pi expects.
@@ -13,7 +23,10 @@ import { walkEntries } from "./walk.js";
  * metadata is used for scoped packages and repositories whose folder name is
  * different from their package name.
  */
-export function resolveExtension(requested, agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR) {
+export function resolveExtension(
+  requested: string,
+  agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR,
+): string {
   if (!requested) {
     throw new Error("--extension requires an extension name or path");
   }
@@ -21,12 +34,12 @@ export function resolveExtension(requested, agentDir = process.env.PI_AGENT_DIR 
   // Explicit paths remain valid, including paths outside ~/.pi/agent.
   if (existsSync(requested)) return requested;
 
-  const roots = [
+  const roots: SearchRoot[] = [
     { path: join(agentDir, "npm", "node_modules"), kind: "npm" },
     { path: join(agentDir, "git"), kind: "git" },
     { path: join(agentDir, "extensions"), kind: "extensions" },
   ];
-  const matches = [];
+  const matches: string[] = [];
 
   for (const root of roots) {
     if (!existsSync(root.path)) continue;
@@ -64,7 +77,10 @@ export function resolveExtension(requested, agentDir = process.env.PI_AGENT_DIR 
     }
   }
 
-  if (matches.length === 1) return matches[0];
+  if (matches.length === 1) {
+    const [match] = matches;
+    if (match !== undefined) return match;
+  }
   if (matches.length === 0) {
     throw new Error(
       `extension not found: ${requested}\n` +

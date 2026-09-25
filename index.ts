@@ -3,11 +3,11 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { main } from "./src/index.js";
+import { main } from "./src/index.ts";
 
 // Re-export the public API straight from the barrel so the list lives in one
-// place (`src/index.js`). `main` is imported above to drive the bin entry.
-export * from "./src/index.js";
+// place (`src/index.ts`). `main` is imported above to drive the bin entry.
+export * from "./src/index.ts";
 
 let invokedPath = "";
 if (process.argv[1]) {

@@ -1,16 +1,19 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { DEFAULT_AGENT_DIR } from "../constants.js";
-import { addMatch, addSkillMatch, skillFileNameMatches } from "./matching.js";
-import { walkEntries } from "./walk.js";
+import { DEFAULT_AGENT_DIR } from "../constants.ts";
+import { addMatch, addSkillMatch, skillFileNameMatches } from "./matching.ts";
+import { walkEntries } from "./walk.ts";
 
 /**
  * Resolve a skill name to a file or skill directory accepted by Pi.
  * Global skills are searched first, followed by skills shipped alongside
  * extensions in npm, git, and the local extensions directory.
  */
-export function resolveSkill(requested, agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR) {
+export function resolveSkill(
+  requested: string,
+  agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR,
+): string {
   if (!requested) {
     throw new Error("--skill requires a skill name or path");
   }
@@ -19,7 +22,7 @@ export function resolveSkill(requested, agentDir = process.env.PI_AGENT_DIR || D
   // agent directory.
   if (existsSync(requested)) return requested;
 
-  const matches = [];
+  const matches: string[] = [];
   const globalSkills = join(agentDir, "skills");
 
   if (existsSync(globalSkills)) {
@@ -52,7 +55,10 @@ export function resolveSkill(requested, agentDir = process.env.PI_AGENT_DIR || D
     }
   }
 
-  if (matches.length === 1) return matches[0];
+  if (matches.length === 1) {
+    const [match] = matches;
+    if (match !== undefined) return match;
+  }
   if (matches.length === 0) {
     throw new Error(
       `skill not found: ${requested}\n` +

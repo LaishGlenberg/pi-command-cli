@@ -12,42 +12,46 @@ transparent pass-through for every other `pi` flag.
 ## Commands
 
 ```bash
-node --test          # run the test suite (121 tests, node:test)
-npm test             # same
-npm link             # expose `pi-cli` locally
+npm test             # run the test suite (121 tests, node:test) on the .ts sources
+npm run typecheck    # tsc --noEmit (tsconfig.json)
+npm run build        # compile to dist/ for publishing (tsconfig.build.json)
+npm link             # expose `pi-cli` locally (run `npm run build` first)
 pi-cli --dry-run ... # print the expanded `pi ...` command without spawning
 ```
 
-There is no build step, no bundler, and no runtime dependencies. Node >= 18.13,
-ESM (`"type": "module"`). Tests use the built-in `node:test` + `node:assert/strict`
-only.
+Written in TypeScript and compiled with `tsc` to `dist/` for publishing; there
+are no runtime dependencies and no bundler. Node >= 22.18, ESM
+(`"type": "module"`). Tests run the `.ts` sources directly through Node's native
+type stripping and use the built-in `node:test` + `node:assert/strict` only.
+`dist/` is generated and gitignored; `bin`/`main` point at `dist/index.js`.
 
 ## Architecture
 
-Entry flow: `index.js` (bin) → `src/cli/main.js#main` → `src/cli/arguments.js`.
+Entry flow: `index.ts` (bin) → `src/cli/main.ts#main` → `src/cli/arguments.ts`.
 
 ```
-index.js            Bin entry; runs main() when invoked directly, re-exports public API
+index.ts            Bin entry; runs main() when invoked directly, re-exports public API
 src/
-  index.js          Barrel re-export of the public API (public surface lives here)
-  constants.js      Agent dir, settings filename, piCli key, source extensions
+  index.ts          Barrel re-export of the public API (public surface lives here)
+  constants.ts      Agent dir, settings filename, piCli key, source extensions
   cli/
-    main.js         main() orchestration, shell/Windows quoting, child spawn
-    arguments.js    stripSaveFlag/merge + parseArguments/buildPiArguments + shellSplit
-    options.js      Option table (FLAG_OPTIONS/VALUE_OPTIONS) + matchOption + -bt validation
-    custom.js       --custom access-path lookup and expansion
-    help.js         `pi-cli --help` text
-    pi-help-msg.js  `pi-cli --helpi` text (pi's own help; keep roughly in sync with pi)
+    main.ts         main() orchestration, shell/Windows quoting, child spawn
+    arguments.ts    stripSaveFlag/merge + parseArguments/buildPiArguments + shellSplit
+    options.ts      Option table (FLAG_OPTIONS/VALUE_OPTIONS) + matchOption + -bt validation
+    custom.ts       --custom access-path lookup and expansion
+    help.ts         `pi-cli --help` text
+    pi-help-msg.ts  `pi-cli --helpi` text (pi's own help; keep roughly in sync with pi)
   resolve/
-    walk.js         Recursive directory walker (skips node_modules/.git, symlink-safe)
-    packages.js     package.json parsing and "is this a pi extension dir" checks
-    matching.js     Path canonicalization and name-matching helpers
-    extensions.js   Extension name → path resolution
-    skills.js       Skill name → path resolution
+    walk.ts         Recursive directory walker (skips node_modules/.git, symlink-safe)
+    packages.ts     package.json parsing and "is this a pi extension dir" checks
+    matching.ts     Path canonicalization and name-matching helpers
+    extensions.ts   Extension name → path resolution
+    skills.ts       Skill name → path resolution
   config/
-    settings.js     Atomic, permissioned settings.json read/write
-    config.js       saveConfig/loadConfig on top of settings.js (+ piCli.custom)
-test/index.test.js  All tests
+    settings.ts     Atomic, permissioned settings.json read/write
+    config.ts       saveConfig/loadConfig on top of settings.ts (+ piCli.custom)
+test/index.test.ts  All tests
+dist/               `tsc` output (generated, gitignored) that npm publishes
 
 graphify-out/        Committed knowledge graph of this repo (see below)
 ```
@@ -56,7 +60,7 @@ graphify-out/        Committed knowledge graph of this repo (see below)
 
 1. `parseArguments(argv, custom)` walks argv left to right. pi-cli's own flags
    are declared in one option table (`FLAG_OPTIONS` / `VALUE_OPTIONS` in
-   (`options.js`) and matched by `matchOption`, which understands detached
+   (`options.ts`) and matched by `matchOption`, which understands detached
    (`--flag value`), equals (`--flag=value`), and attached short (`-fvalue`,
    `-f=value`) spellings. The handled flags are `-e`, `-s`,
    `-bt`/`--built-in-tools`, `-cu`/`--custom`, `-i`/`--import`, `-S`/`--save`,
@@ -116,12 +120,17 @@ Stored command strings are tokenized with `shellSplit` (quote-aware) so a quoted
 
 - Plain ESM, named exports, no classes, no external deps. Prefer small pure
   functions so they can be unit-tested directly.
+- TypeScript is compiled but the `.ts` sources are also run directly by Node, so
+  keep syntax erasable (`tsconfig.json` sets `erasableSyntaxOnly`): no `enum`,
+  `namespace`, or parameter properties. Relative imports use explicit `.ts`
+  specifiers; `rewriteRelativeImportExtensions` rewrites them to `.js` in
+  `dist/`.
 - Errors: throw `Error` with a lowercase, actionable message that includes the
   searched locations or the ambiguity list. `main()` catches and prints
   `pi-cli: <message>` to stderr, returning exit code 1.
 - Resolution must stay deterministic: return an explicit path if it exists,
   otherwise search, and on 0 or >1 matches throw rather than guess.
-- Add public API to `src/index.js` only; `index.js` re-exports it with
+- Add public API to `src/index.ts` only; `index.ts` re-exports it with
   `export *`, so the two lists cannot drift.
 - Windows matters: never spawn a `.cmd` directly. Route through
   `buildSpawnSpec`/`windowsQuote` (cmd.exe `/d /s /c`) and keep the
@@ -149,6 +158,9 @@ committed artifact.
   structure, then commit the regenerated artifacts. Pure code changes are
   re-extracted via AST with no LLM; doc/README changes also refresh semantic
   nodes.
+- **Pending refresh:** the TypeScript migration renamed every source file from
+  `.js` to `.ts`; run `graphify update .` and commit the regenerated artifacts
+  when convenient (intentionally deferred during the migration).
 - **Tracked:** `graph.json`, `GRAPH_REPORT.md`, `graph.html`, `manifest.json`,
   `.graphify_labels.json`.
 - **Ignored (machine-specific):** `cache/`, `memory/`, `reflections/`,
@@ -163,21 +175,25 @@ committed artifact.
 
 ## Testing
 
-- Add tests to `test/index.test.js`. Use the `fixture()` helper to build a fake
+- Add tests to `test/index.test.ts`. Use the `fixture()` helper to build a fake
   agent dir (npm/git/extensions/skills trees) and `withEnv` to set
   `PI_AGENT_DIR` / `PI_BIN`.
 - Prefer asserting on `parseArguments` output and `buildPiArguments` output
   rather than spawning pi. `parseArguments(argv, custom)` takes fixture data (or
   a loader) for `--custom` tests. `main()` tests capture
-  stdout/stderr and set env.
-- `test/npm-install.test.js` is an integration test: it runs `npm pack`, installs
-  the tarball into a throwaway global prefix, and runs the installed `pi-cli`
-  bin. Keep it in sync when `files`, `bin`, or the entry point change. It skips
-  when npm is missing and needs no network (zero dependencies).
-- Run `node --test` before finishing; the suite is fast and must stay green.
+  stdout/stderr and set env. For `buildPiArguments`-only tests, use the
+  `parsedArgs()` helper instead of hand-writing every `ParsedArguments` field.
+- `test/npm-install.test.ts` is an integration test: it runs `npm pack` (which
+  builds `dist/` via `prepack`), installs the tarball into a throwaway global
+  prefix, and runs the installed `pi-cli` bin. It is the check that the compiled
+  artifact actually ships. Keep it in sync when `files`, `bin`, `main`, or the
+  entry point change. It skips when npm is missing and needs no network (zero
+  dependencies).
+- Run `node --test` and `npm run typecheck` before finishing; the suite is fast
+  and must stay green.
 
 ## Documentation
 
 Update `README.md` whenever user-facing behavior changes (flags, expansion
-rules, config format, supported platforms). Keep `src/cli/help.js` in sync with the
+rules, config format, supported platforms). Keep `src/cli/help.ts` in sync with the
 actual options, and add a usage example for any new flag.

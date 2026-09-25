@@ -1,10 +1,36 @@
-import { BUILTIN_TOOLS } from "../constants.js";
+import { BUILTIN_TOOLS, isBuiltinTool, type BuiltinTool } from "../constants.ts";
+
+export type OptionKey =
+  | "help"
+  | "helpi"
+  | "nothing"
+  | "dryRun"
+  | "noDefaults"
+  | "builtinTools"
+  | "custom"
+  | "extension"
+  | "skill"
+  | "save"
+  | "import";
+
+export interface MatchedOption {
+  key: OptionKey;
+  flag: string;
+  requires: string | undefined;
+  inline: string | undefined;
+}
+
+interface ValueOption {
+  key: OptionKey;
+  flags: readonly string[];
+  requires: string;
+}
 
 // pi-cli's own options are declared once here. FLAG_OPTIONS take no value;
 // VALUE_OPTIONS accept a value detached (`--flag value`), after an equals sign
 // (`--flag=value`), or attached to a short flag (`-fvalue`). Any argument that
 // does not match is forwarded to pi untouched.
-const FLAG_OPTIONS = [
+const FLAG_OPTIONS: readonly { key: OptionKey; flags: readonly string[] }[] = [
   { key: "help", flags: ["-h", "--help"] },
   { key: "helpi", flags: ["-hp", "--helpi"] },
   { key: "nothing", flags: ["-n", "--nothing"] },
@@ -12,7 +38,7 @@ const FLAG_OPTIONS = [
   { key: "noDefaults", flags: ["--no-defaults", "--allow-discovery"] },
 ];
 
-const VALUE_OPTIONS = [
+const VALUE_OPTIONS: readonly ValueOption[] = [
   {
     key: "builtinTools",
     flags: ["-bt", "--built-in-tools"],
@@ -31,7 +57,7 @@ const VALUE_OPTIONS = [
  * when the value was attached to the flag. Returns `undefined` for anything
  * that should pass through to pi.
  */
-export function matchOption(argument) {
+export function matchOption(argument: string): MatchedOption | undefined {
   for (const option of FLAG_OPTIONS) {
     if (option.flags.includes(argument)) {
       return { key: option.key, flag: argument, requires: undefined, inline: undefined };
@@ -63,7 +89,11 @@ export function matchOption(argument) {
   return undefined;
 }
 
-export function addBuiltinTools(builtinTools, requested, flag) {
+export function addBuiltinTools(
+  builtinTools: Set<BuiltinTool>,
+  requested: string,
+  flag: string,
+): void {
   const names = requested
     .split(",")
     .map((name) => name.trim())
@@ -72,7 +102,7 @@ export function addBuiltinTools(builtinTools, requested, flag) {
     throw new Error(`${flag} requires a comma-separated list of built-in tools`);
   }
   for (const name of names) {
-    if (!BUILTIN_TOOLS.includes(name)) {
+    if (!isBuiltinTool(name)) {
       throw new Error(`unknown built-in tool: ${name}\nvalid tools: ${BUILTIN_TOOLS.join(", ")}`);
     }
     builtinTools.add(name);
