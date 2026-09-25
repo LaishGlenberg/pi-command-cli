@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -32,12 +33,14 @@ jobs:
         shell: bash
         run: |
           current=$(node -p "require('./package.json').version")
-          previous=""
-          if git cat-file -e "${{ github.event.before }}:package.json" 2>/dev/null; then
-            previous=$(git show "${{ github.event.before }}:package.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
+          git fetch --tags --force
+          if git rev-parse -q --verify "refs/tags/v$current" >/dev/null; then
+            tag_exists=true
+          else
+            tag_exists=false
           fi
 
-          node scripts/release-version.ts --current "$current" --previous "$previous" >> "$GITHUB_OUTPUT"
+          node scripts/release-version.ts --current "$current" --tag-exists "$tag_exists" >> "$GITHUB_OUTPUT"
 
       - name: Bump the patch version
         if: steps.version.outputs.needs_bump == 'true'
