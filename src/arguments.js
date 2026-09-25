@@ -2,6 +2,9 @@ import { BUILTIN_TOOLS, DEFAULT_AGENT_DIR } from "./constants.js";
 import { resolveExtension } from "./extensions.js";
 import { resolveSkill } from "./skills.js";
 
+// A runaway guard for `--custom` fixtures that reference themselves.
+const MAX_CUSTOM_EXPANSIONS = 1000;
+
 export function stripSaveFlag(argv) {
   const kept = [];
   let index = 0;
@@ -182,10 +185,11 @@ function customValueToArguments(value) {
 
 /**
  * Expand a `--custom` expression against the user's `piCli.custom` fixtures.
- * The expression is a small argument list where one token is an access path
- * such as `sys_prompts[0]`; that token is replaced by the referenced value.
- * Strings pass through, arrays spread into separate arguments, and other
- * values are JSON-serialized.
+ * The expression is a small argument list in which any token may be an access
+ * path such as `sys_prompts[0]`; each such token is replaced by the referenced
+ * value. Strings pass through, arrays spread into separate arguments, and
+ * other values are JSON-serialized. Multiple references are allowed; the
+ * expression must reference at least one fixture or it is treated as a typo.
  */
 export function resolveCustomExpression(expression, custom = {}) {
   if (typeof expression !== "string" || expression.trim() === "") {
@@ -205,9 +209,6 @@ export function resolveCustomExpression(expression, custom = {}) {
       continue;
     }
     references += 1;
-    if (references > 1) {
-      throw new Error(`ambiguous custom reference: ${expression}`);
-    }
     resolved.push(...customValueToArguments(lookup.value));
   }
 
@@ -217,7 +218,8 @@ export function resolveCustomExpression(expression, custom = {}) {
   return resolved;
 }
 
-export function parseArguments(argv) {
+export function parseArguments(argv, custom = {}) {
+  const tokens = [...argv];
   const piArguments = [];
   let parseOptions = true;
   let useDefaults = true;
@@ -226,9 +228,31 @@ export function parseArguments(argv) {
   let saveName;
   let importName;
   let dryRun = false;
+  let customExpansions = 0;
 
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
+  // Fixtures may be passed directly or as a lazy loader, so a plain `--help`
+  // run never has to read settings.json.
+  let fixtures;
+  const getFixtures = () => {
+    if (fixtures === undefined) {
+      fixtures = typeof custom === "function" ? custom() : custom;
+    }
+    return fixtures;
+  };
+
+  // Splice the expanded expression into the token stream in place of the
+  // `--custom` wrapper so the result is parsed exactly like typed arguments
+  // (an expanded `-e foo` enables extensions and adds `-ne`, and so on).
+  const expandCustom = (index, removeCount, expression) => {
+    customExpansions += 1;
+    if (customExpansions > MAX_CUSTOM_EXPANSIONS) {
+      throw new Error("--custom expanded too many times (possible cycle)");
+    }
+    tokens.splice(index, removeCount, ...resolveCustomExpression(expression, getFixtures()));
+  };
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const argument = tokens[index];
 
     if (parseOptions && argument === "--") {
       parseOptions = false;
@@ -257,7 +281,7 @@ export function parseArguments(argv) {
     }
 
     if (parseOptions && (argument === "--built-in-tools" || argument === "-bt")) {
-      const requested = argv[index + 1];
+      const requested = tokens[index + 1];
       if (requested === undefined) {
         throw new Error(`${argument} requires a comma-separated list of built-in tools`);
       }
@@ -278,7 +302,7 @@ export function parseArguments(argv) {
     }
 
     if (parseOptions && (argument === "--save" || argument === "--import" || argument === "-i" || argument === "-S")) {
-      const name = argv[index + 1];
+      const name = tokens[index + 1];
       if (name === undefined) {
         throw new Error(`${argument} requires a config name`);
       }
@@ -312,32 +336,34 @@ export function parseArguments(argv) {
     }
 
     if (parseOptions && (argument === "--custom" || argument === "-cu")) {
-      const expression = argv[index + 1];
+      const expression = tokens[index + 1];
       if (expression === undefined) {
         throw new Error(`${argument} requires a value`);
       }
-      piArguments.push("--custom", expression);
-      index += 1;
+      expandCustom(index, 2, expression);
+      index -= 1;
       continue;
     }
 
     if (parseOptions && argument.startsWith("--custom=")) {
       const expression = argument.slice("--custom=".length);
       if (!expression) throw new Error("--custom requires a value");
-      piArguments.push("--custom", expression);
+      expandCustom(index, 1, expression);
+      index -= 1;
       continue;
     }
 
     if (parseOptions && argument.startsWith("-cu") && argument.length > 3) {
       const expression = argument.startsWith("-cu=") ? argument.slice(4) : argument.slice(3);
       if (!expression) throw new Error("-cu requires a value");
-      piArguments.push("--custom", expression);
+      expandCustom(index, 1, expression);
+      index -= 1;
       continue;
     }
 
     if (parseOptions && (argument === "--extension" || argument === "-e")) {
       groups.add("extension");
-      const requested = argv[index + 1];
+      const requested = tokens[index + 1];
       if (requested === undefined) {
         throw new Error(`${argument} requires an extension name or path`);
       }
@@ -368,7 +394,7 @@ export function parseArguments(argv) {
 
     if (parseOptions && (argument === "--skill" || argument === "-s")) {
       groups.add("skill");
-      const requested = argv[index + 1];
+      const requested = tokens[index + 1];
       if (requested === undefined) {
         throw new Error(`${argument} requires a skill name or path`);
       }
@@ -416,23 +442,12 @@ export function parseArguments(argv) {
 export function buildPiArguments(
   parsed,
   agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR,
-  custom = {},
 ) {
   if (parsed.help) return [];
 
   const resolved = [];
   for (let index = 0; index < parsed.piArguments.length; index += 1) {
     const argument = parsed.piArguments[index];
-
-    if (argument === "--custom") {
-      const expression = parsed.piArguments[index + 1];
-      if (expression === undefined) {
-        throw new Error("--custom requires a value");
-      }
-      resolved.push(...resolveCustomExpression(expression, custom));
-      index += 1;
-      continue;
-    }
 
     resolved.push(argument);
     if (argument === "--extension") {

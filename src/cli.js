@@ -56,7 +56,7 @@ export function buildSpawnSpec(
 export function main(argv = process.argv.slice(2)) {
   let parsed;
   try {
-    parsed = parseArguments(argv);
+    parsed = parseArguments(argv, () => loadCustomFixtures());
     if (parsed.help) {
       printHelp();
       return 0;
@@ -74,7 +74,7 @@ export function main(argv = process.argv.slice(2)) {
     if (parsed.saveName) {
       // Validate resource names now so a typo in an extension/skill name
       // fails before we write anything.
-      buildPiArguments(parsed, undefined, loadCustomFixtures());
+      buildPiArguments(parsed);
       const tokens = stripSaveFlag(argv);
       const command = ["pi-cli", ...tokens.map(shellQuote)].join(" ");
       const destination = saveConfig(parsed.saveName, command);
@@ -87,7 +87,7 @@ export function main(argv = process.argv.slice(2)) {
       parsed = mergeParsedArguments(saved, parsed);
     }
 
-    const piArguments = buildPiArguments(parsed, undefined, loadCustomFixtures());
+    const piArguments = buildPiArguments(parsed);
     const piCommand = process.env.PI_BIN || "pi";
 
     if (parsed.dryRun) {

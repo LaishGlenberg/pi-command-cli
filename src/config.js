@@ -62,14 +62,17 @@ function savedAgents(settings, path) {
  * Read the user-defined `piCli.custom` fixtures used by `--custom`. Returns an
  * empty object when there is no settings file or the value is not an object.
  */
-export function loadCustomFixtures(settingsFilePath) {
-  const path = settingsFilePath || settingsPath();
-  if (!existsSync(path)) return {};
-
-  const piCli = readSettings(path)[PI_CLI_KEY];
+function customFixtures(settings) {
+  const piCli = settings[PI_CLI_KEY];
   const custom = piCli && typeof piCli === "object" ? piCli.custom : undefined;
   if (!custom || typeof custom !== "object" || Array.isArray(custom)) return {};
   return custom;
+}
+
+export function loadCustomFixtures(settingsFilePath) {
+  const path = settingsFilePath || settingsPath();
+  if (!existsSync(path)) return {};
+  return customFixtures(readSettings(path));
 }
 
 export function loadConfig(search, settingsFilePath) {
@@ -105,7 +108,7 @@ export function loadConfig(search, settingsFilePath) {
   // Re-parse the stored command string as fresh argv (skip the leading "pi-cli").
   const tokens = shellSplit(command);
   if (tokens[0] === "pi-cli") tokens.shift();
-  const saved = parseArguments(tokens);
+  const saved = parseArguments(tokens, customFixtures(settings));
   saved.importName = candidates[0];
   return saved;
 }

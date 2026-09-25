@@ -127,8 +127,8 @@ Windows too (`C:\Program Files\...\pi.cmd`).
 
 `piCli.custom` holds arbitrary JSON values — strings, arrays, or nested objects
 — that you can reference from the command line or from saved configs. `-cu` /
-`--custom` takes a small argument list in which one token is an access path into
-`piCli.custom`; that token is replaced by the referenced value.
+`--custom` takes a small argument list in which any token may be an access path
+into `piCli.custom`; each such token is replaced by the referenced value.
 
 ```json
 {
@@ -137,6 +137,7 @@ Windows too (`C:\Program Files\...\pi.cmd`).
       "sys_prompts": [
         "You are a reviewer agent. Delegate edits to a worker via pi-intercom."
       ],
+      "ext_list": ["pi-intercom", "rtk", "todo"],
       "cheap_model": ["--model", "google/gemini"]
     }
   }
@@ -144,19 +145,28 @@ Windows too (`C:\Program Files\...\pi.cmd`).
 ```
 
 ```bash
-pi-cli -ns -e pi-intercom -bt grep,ls,bash \
-  --custom '--system-prompt sys_prompts[0]'
+pi-cli -ns -bt grep,ls,bash \
+  --custom '--system-prompt sys_prompts[0] -e ext_list[0]'
 # expands to:
-pi-cli -ns -e pi-intercom -bt grep,ls,bash \
-  --system-prompt "You are a reviewer agent. ..."
+pi-cli -ns -bt grep,ls,bash \
+  --system-prompt "You are a reviewer agent. ..." -e pi-intercom
 ```
 
 Access paths use JavaScript-style syntax: `key`, `key[0]`, or
 `key.nested['other']`. Strings are substituted as-is, arrays spread into
-separate arguments, and objects/numbers/booleans are JSON-serialized. A missing
-path throws `custom fixture not found`. The `--custom` wrapper is removed and
-its expansion is inserted in place, so it composes with every other flag and
-with saved configs:
+separate arguments, and objects/numbers/booleans are JSON-serialized. Multiple
+references are allowed in one expression. Tokens that do not resolve are passed
+through literally, and an expression that resolves nothing throws
+`custom fixture not found`.
+
+Expansion happens in the parser, not as plain text substitution: once the
+fixture values are spliced in, the result is parsed exactly as if you had typed
+those tokens on the command line. pi-cli flags inside a `--custom` expression
+are therefore honored — `-e`/`--extension`, `-s`/`--skill`, `-bt`, even a nested
+`--custom` — including the `-ne`/`-ns` discovery flags they imply. So
+`--custom '-e ext_list[0]'` behaves like `-e pi-intercom` and resolves the
+extension to its path. The `--custom` wrapper is removed, so it composes with
+every other flag and with saved configs:
 
 ```json
 {
