@@ -1,14 +1,17 @@
-name: Create release
+name: Release
 
 on:
   push:
     branches:
       - main
-    paths:
-      - package.json
 
 permissions:
   contents: write
+
+# Queue releases instead of cancelling them so a version bump is never lost.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -19,35 +22,48 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check for a version change
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Decide the next version
         id: version
         shell: bash
         run: |
-          current_version=$(node -p "require('./package.json').version")
-          previous_version=""
+          current=$(node -p "require('./package.json').version")
+          previous=""
           if git cat-file -e "${{ github.event.before }}:package.json" 2>/dev/null; then
-            previous_version=$(git show "${{ github.event.before }}:package.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
+            previous=$(git show "${{ github.event.before }}:package.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
           fi
 
-          if [ "$current_version" = "$previous_version" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "package.json version is unchanged ($current_version); skipping release"
+          node scripts/release-version.ts --current "$current" --previous "$previous" >> "$GITHUB_OUTPUT"
+
+      - name: Bump the patch version
+        if: steps.version.outputs.needs_bump == 'true'
+        run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
+
+      - name: Commit the version bump
+        if: steps.version.outputs.needs_bump == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore(release): ${{ steps.version.outputs.tag }} [skip ci]"
+          git push
+
+      - name: Create the tag if it does not exist
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          git fetch --tags --force
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Tag $tag already exists; leaving it in place."
             exit 0
           fi
+          git tag "$tag"
+          git push origin "$tag"
 
-          tag="v$current_version"
-          git fetch --tags --force
-
-          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "::error::Tag $tag does not exist. Push it (git push origin $tag) before merging this version bump."
-            exit 1
-          fi
-
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-      - name: Create GitHub release for the existing tag
-        if: steps.version.outputs.changed == 'true'
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}

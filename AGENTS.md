@@ -12,7 +12,7 @@ transparent pass-through for every other `pi` flag.
 ## Commands
 
 ```bash
-npm test             # run the test suite (121 tests, node:test) on the .ts sources
+npm test             # run the test suite (127 tests, node:test) on the .ts sources
 npm run typecheck    # tsc --noEmit (tsconfig.json)
 npm run build        # compile to dist/ for publishing (tsconfig.build.json)
 npm link             # expose `pi-cli` locally (the prepare script builds first)
@@ -144,6 +144,24 @@ Stored command strings are tokenized with `shellSplit` (quote-aware) so a quoted
 - `settings.json` is shared with pi. Only touch the `piCli` key (`piCli.agents`
   for saved commands; never clobber `piCli.custom`), write atomically (temp +
   rename) with `0600`, and preserve unrelated keys.
+
+## Releasing
+
+Releases are cut entirely in CI by `.github/workflows/release.yml`, which runs
+on every push to `main`:
+
+- If `package.json`'s version changed in the push (a deliberate minor/major bump
+  made in the merged PR), that version is released as-is.
+- Otherwise the workflow bumps the patch version, commits it back to `main` as
+  `chore(release): vX.Y.Z [skip ci]`, and tags that commit.
+
+The tag is created in GitHub on a commit that is actually on `main`; never push
+`v*` tags by hand. There is no `npm publish` step (npm disallows publishing via
+`GITHUB_TOKEN`), so publishing stays manual. The version decision is a pure
+function in `scripts/release-version.ts`, unit-tested in
+`test/release-version.test.ts`, so the workflow logic stays testable. A bump
+commit is pushed with `GITHUB_TOKEN`, which does not retrigger workflows, so
+the workflow cannot loop on its own commit.
 
 ## Knowledge graph (graphify)
 

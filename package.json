@@ -40,7 +40,7 @@
     "prepack": "npm run build",
     "prepare": "npm run build",
     "test": "node --test",
-    "lint": "oxlint --deny-warnings index.ts src test"
+    "lint": "oxlint --deny-warnings index.ts src scripts test"
   },
   "devDependencies": {
     "@types/node": "^24.13.6",
