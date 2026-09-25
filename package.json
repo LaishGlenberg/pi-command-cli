@@ -35,9 +35,10 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/index.js', 0o755)\"",
     "typecheck": "tsc -p tsconfig.json",
     "prepack": "npm run build",
+    "prepare": "npm run build",
     "test": "node --test",
     "lint": "oxlint --deny-warnings index.ts src test"
   },

@@ -15,7 +15,7 @@ transparent pass-through for every other `pi` flag.
 npm test             # run the test suite (121 tests, node:test) on the .ts sources
 npm run typecheck    # tsc --noEmit (tsconfig.json)
 npm run build        # compile to dist/ for publishing (tsconfig.build.json)
-npm link             # expose `pi-cli` locally (run `npm run build` first)
+npm link             # expose `pi-cli` locally (the prepare script builds first)
 pi-cli --dry-run ... # print the expanded `pi ...` command without spawning
 ```
 
@@ -23,7 +23,9 @@ Written in TypeScript and compiled with `tsc` to `dist/` for publishing; there
 are no runtime dependencies and no bundler. Node >= 22.18, ESM
 (`"type": "module"`). Tests run the `.ts` sources directly through Node's native
 type stripping and use the built-in `node:test` + `node:assert/strict` only.
-`dist/` is generated and gitignored; `bin`/`main` point at `dist/index.js`.
+`dist/` is generated and gitignored; `bin`/`main` point at `dist/index.js`. The
+`prepare` script builds `dist/` on `npm install`/`npm link`, so a fresh checkout
+is runnable without a manual build.
 
 ## Architecture
 
@@ -135,6 +137,10 @@ Stored command strings are tokenized with `shellSplit` (quote-aware) so a quoted
 - Windows matters: never spawn a `.cmd` directly. Route through
   `buildSpawnSpec`/`windowsQuote` (cmd.exe `/d /s /c`) and keep the
   `windowsVerbatimArguments` option.
+- The `build` script marks `dist/index.js` executable: `tsc` emits it `0644`,
+  but a globally linked `pi-cli` runs the file through its shebang and needs
+  `+x`. A bare `tsc` run that skips this step will make the linked bin fail
+  with "Permission denied".
 - `settings.json` is shared with pi. Only touch the `piCli` key (`piCli.agents`
   for saved commands; never clobber `piCli.custom`), write atomically (temp +
   rename) with `0600`, and preserve unrelated keys.
