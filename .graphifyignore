@@ -1,0 +1,10 @@
+# graphify ignore rules (gitignore syntax). Applied on top of .gitignore and
+# can only exclude more, never re-include. See AGENTS.md for context.
+#
+# Built-ins already skipped, no need to list here: node_modules/, .git/,
+# graphify-out/, dist/, build/, target/, venvs, caches, test-report dirs.
+
+# Tests contribute many symbol nodes but little architectural signal.
+test/
+*.md
+package.json

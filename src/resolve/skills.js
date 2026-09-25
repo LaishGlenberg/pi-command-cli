@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { DEFAULT_AGENT_DIR } from "./constants.js";
+import { DEFAULT_AGENT_DIR } from "../constants.js";
 import { addMatch, addSkillMatch, skillFileNameMatches } from "./matching.js";
 import { walkEntries } from "./walk.js";
 

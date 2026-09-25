@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { DEFAULT_AGENT_DIR } from "./constants.js";
+import { DEFAULT_AGENT_DIR } from "../constants.js";
 import { addMatch, sourceNameMatches } from "./matching.js";
 import { isPiPackage, looksLikeExtensionDirectory, packageNameMatches, readPackageJson } from "./packages.js";
 import { walkEntries } from "./walk.js";
@@ -30,40 +30,36 @@ export function resolveExtension(requested, agentDir = process.env.PI_AGENT_DIR 
 
   for (const root of roots) {
     if (!existsSync(root.path)) continue;
+    const isNpm = root.kind === "npm";
 
-    if (root.kind === "npm") {
-      // Package roots are at depth one, or depth two for scoped packages.
-      for (const entry of walkEntries(root.path, { maxDepth: 2, skipDirectories: new Set() })) {
+    // One pass per root collects both name matches and package.json name
+    // matches. npm package roots are at depth one, or depth two for scoped
+    // packages; git and local extension trees may nest arbitrarily. Source
+    // files are valid matches too -- e.g. extensions/orca-prefill.ts.
+    for (const entry of walkEntries(root.path, isNpm ? { maxDepth: 3 } : {})) {
+      if (entry.isDirectory) {
         if (
-          entry.isDirectory &&
           entry.name === requested &&
+          (!isNpm || entry.depth <= 2) &&
           looksLikeExtensionDirectory(entry.path)
         ) {
           addMatch(matches, entry.path);
         }
+        continue;
       }
-    } else {
-      // Git and local extension folders may be nested. Source files are also
-      // valid -- e.g. extensions/orca-prefill.ts.
-      for (const entry of walkEntries(root.path)) {
-        if (entry.isDirectory) {
-          if (entry.name === requested && looksLikeExtensionDirectory(entry.path)) {
-            addMatch(matches, entry.path);
-          }
-        } else if (sourceNameMatches(entry.name, requested)) {
-          addMatch(matches, entry.path);
-        }
-      }
-    }
 
-    // A package's directory name is not always its package name (especially
-    // for scoped npm packages and extensions checked out from git).
-    const packageDepth = root.kind === "npm" ? 3 : Infinity;
-    for (const entry of walkEntries(root.path, { maxDepth: packageDepth })) {
-      if (entry.isDirectory || entry.name !== "package.json") continue;
-      const packageJson = readPackageJson(resolve(entry.path, ".."));
-      if (packageNameMatches(packageJson, requested) && isPiPackage(packageJson)) {
-        addMatch(matches, resolve(entry.path, ".."));
+      if (!isNpm && sourceNameMatches(entry.name, requested)) {
+        addMatch(matches, entry.path);
+      }
+
+      // A package's directory name is not always its package name (especially
+      // for scoped npm packages and extensions checked out from git).
+      if (entry.name === "package.json") {
+        const directory = resolve(entry.path, "..");
+        const packageJson = readPackageJson(directory);
+        if (packageNameMatches(packageJson, requested) && isPiPackage(packageJson)) {
+          addMatch(matches, directory);
+        }
       }
     }
   }

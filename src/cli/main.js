@@ -6,7 +6,7 @@ import {
   parseArguments,
   stripSaveFlag,
 } from "./arguments.js";
-import { loadConfig, loadCustomFixtures, saveConfig } from "./config.js";
+import { loadConfig, loadCustomFixtures, saveConfig } from "../config/config.js";
 import { printHelp } from "./help.js";
 import { printHelpi } from "./pi-help-msg.js";
 
