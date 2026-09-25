@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 
-import { PI_CLI_KEY } from "./constants.js";
-import { parseArguments, shellSplit } from "./arguments.js";
+import { PI_CLI_KEY } from "../constants.js";
+import { parseArguments, shellSplit } from "../cli/arguments.js";
 import { readSettings, settingsPath, writeSettings } from "./settings.js";
 
 export function validateConfigName(name) {

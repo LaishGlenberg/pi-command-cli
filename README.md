@@ -65,6 +65,10 @@ loading. Naming skills only disables *skill* discovery, so your extensions keep
 loading. Naming both disables both. Runs with no `-e`/`-s` flags are a
 transparent pass-through to `pi` and add no discovery flags of their own.
 
+`-e` and `-s` may be repeated or take comma-separated values. Detached
+(`--extension name`), equals (`--extension=name`), and attached short
+(`-ename`, `-e=name`) spellings are equivalent.
+
 Extension names are searched in:
 
 - `$PI_AGENT_DIR/npm/node_modules` (defaults to `~/.pi/agent`)
@@ -218,17 +222,22 @@ index.js            Bin entry point (delegates to src/, re-exports the public AP
 src/
   index.js          Barrel re-export of the public API
   constants.js      Shared constants (agent dir, settings filename, extensions)
-  walk.js           Safe recursive directory walker
-  packages.js       package.json reading and extension-directory detection
-  matching.js       Path canonicalization and name-matching helpers
-  extensions.js     Extension name resolution
-  skills.js         Skill name resolution
-  settings.js       Low-level settings.json read/write
-  config.js         Saved pi-cli configurations + piCli.custom fixtures
-  arguments.js      CLI argument parsing, Pi argument building, --custom expansion
-  help.js           pi-cli --help output
-  pi-help-msg.js    pi --helpi output
-  cli.js            main() orchestration and child process spawning
+  cli/
+    main.js         main() orchestration and child process spawning
+    arguments.js    CLI argument parsing, Pi argument building
+    options.js      Option table and matching
+    custom.js       --custom expansion into arguments
+    help.js         pi-cli --help output
+    pi-help-msg.js  pi --helpi output
+  resolve/
+    walk.js         Safe recursive directory walker
+    packages.js     package.json reading and extension-directory detection
+    matching.js     Path canonicalization and name-matching helpers
+    extensions.js   Extension name resolution
+    skills.js       Skill name resolution
+  config/
+    settings.js     Low-level settings.json read/write
+    config.js       Saved pi-cli configurations + piCli.custom fixtures
 ```
 
 ## Windows

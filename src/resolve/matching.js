@@ -1,7 +1,7 @@
 import { realpathSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { SOURCE_EXTENSIONS } from "./constants.js";
+import { SOURCE_EXTENSIONS } from "../constants.js";
 
 export function canonicalPath(path) {
   try {

@@ -15,7 +15,8 @@ import {
   resolveSkill,
   saveConfig,
   shellSplit,
-} from "../index.js";import { buildSpawnSpec, windowsQuote } from "../src/cli.js";
+} from "../index.js";
+import { buildSpawnSpec, windowsQuote } from "../src/cli/main.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -490,6 +491,23 @@ test("-e with attached value works", () => {
 test("-s with attached value works", () => {
   const parsed = parseArguments(["-smy-skill"]);
   assert.deepEqual(parsed.piArguments, ["--skill", "my-skill"]);
+});
+
+test("-e=value and -s=value normalize the equals sign", () => {
+  assert.deepEqual(parseArguments(["-e=pi-intercom"]).piArguments, ["--extension", "pi-intercom"]);
+  assert.deepEqual(parseArguments(["-s=my-skill"]).piArguments, ["--skill", "my-skill"]);
+});
+
+test("-e= with an empty value throws", () => {
+  assert.throws(() => parseArguments(["-e="]), {
+    message: "-e requires an extension name or path",
+  });
+});
+
+test("-cu= with an empty value throws", () => {
+  assert.throws(() => parseArguments(["-cu="]), {
+    message: "-cu requires a value",
+  });
 });
 
 test("-t with attached value passes through", () => {
