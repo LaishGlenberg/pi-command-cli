@@ -37,9 +37,10 @@ npm install -g @lglen/pi-command-cli
 From a checkout (local development):
 
 ```bash
-git clone https://github.com/LaishGlenberg/awk-changelog-tool.git
-cd awk-changelog-tool
+git clone https://github.com/LaishGlenberg/pi-command-cli.git
+cd pi-command-cli
 npm install
+npm run build
 npm link
 ```
 
