@@ -9,6 +9,7 @@ A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary 
 - `-bt` / `--built-in-tools` to keep only chosen built-in tools while leaving extension tools enabled
 - `-n` flag to kill ALL external context sources and tools
 - `-S` and `--import` options for saving and loading pi-cli startup options
+- `-cu` / `--custom` to expand user-defined `piCli.custom` fixtures into arguments
 
 ```bash
 pi-cli -e pi-intercom
@@ -122,6 +123,53 @@ pi-cli -n -e pi-intercom
 Set `PI_BIN` to use a different Pi executable. Paths with spaces work on
 Windows too (`C:\Program Files\...\pi.cmd`).
 
+## Custom fixtures (`--custom`)
+
+`piCli.custom` holds arbitrary JSON values — strings, arrays, or nested objects
+— that you can reference from the command line or from saved configs. `-cu` /
+`--custom` takes a small argument list in which one token is an access path into
+`piCli.custom`; that token is replaced by the referenced value.
+
+```json
+{
+  "piCli": {
+    "custom": {
+      "sys_prompts": [
+        "You are a reviewer agent. Delegate edits to a worker via pi-intercom."
+      ],
+      "cheap_model": ["--model", "google/gemini"]
+    }
+  }
+}
+```
+
+```bash
+pi-cli -ns -e pi-intercom -bt grep,ls,bash \
+  --custom '--system-prompt sys_prompts[0]'
+# expands to:
+pi-cli -ns -e pi-intercom -bt grep,ls,bash \
+  --system-prompt "You are a reviewer agent. ..."
+```
+
+Access paths use JavaScript-style syntax: `key`, `key[0]`, or
+`key.nested['other']`. Strings are substituted as-is, arrays spread into
+separate arguments, and objects/numbers/booleans are JSON-serialized. A missing
+path throws `custom fixture not found`. The `--custom` wrapper is removed and
+its expansion is inserted in place, so it composes with every other flag and
+with saved configs:
+
+```json
+{
+  "piCli": {
+    "agents": {
+      "reviewer": "pi-cli -ns -e pi-intercom -bt grep,ls,bash --custom '--system-prompt sys_prompts[0]'"
+    }
+  }
+}
+```
+
+## Save named configurations
+
 Save named configurations in `~/.pi/agent/settings.json` (the same file Pi
 uses for its own settings, under a `piCli` key):
 
@@ -133,14 +181,18 @@ pi-cli --import searcher
 # -i searcher is an alias for --import searcher
 ```
 
-Configurations are stored as plain command strings in settings.json, so you can edit them by
-hand:
+Configurations are stored as plain command strings under `piCli.agents` in
+settings.json, so you can edit them by hand. The `piCli.custom` key is reserved
+for custom fixtures. Legacy configs stored directly under `piCli` are still
+read, but new saves always go to `piCli.agents`.
 
 ```json
 {
   "piCli": {
-    "searcher": "pi-cli -e pi-intercom -s playwright-cli",
-    "quick": "pi-cli --model google/gemini"
+    "agents": {
+      "searcher": "pi-cli -e pi-intercom -s playwright-cli",
+      "quick": "pi-cli --model google/gemini"
+    }
   }
 }
 ```
@@ -162,8 +214,8 @@ src/
   extensions.js     Extension name resolution
   skills.js         Skill name resolution
   settings.js       Low-level settings.json read/write
-  config.js         Saved pi-cli configurations (saveConfig/loadConfig)
-  arguments.js      CLI argument parsing and Pi argument building
+  config.js         Saved pi-cli configurations + piCli.custom fixtures
+  arguments.js      CLI argument parsing, Pi argument building, --custom expansion
   help.js           pi-cli --help output
   pi-help-msg.js    pi --helpi output
   cli.js            main() orchestration and child process spawning

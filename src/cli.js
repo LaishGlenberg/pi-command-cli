@@ -6,7 +6,7 @@ import {
   parseArguments,
   stripSaveFlag,
 } from "./arguments.js";
-import { loadConfig, saveConfig } from "./config.js";
+import { loadConfig, loadCustomFixtures, saveConfig } from "./config.js";
 import { printHelp } from "./help.js";
 import { printHelpi } from "./pi-help-msg.js";
 
@@ -74,7 +74,7 @@ export function main(argv = process.argv.slice(2)) {
     if (parsed.saveName) {
       // Validate resource names now so a typo in an extension/skill name
       // fails before we write anything.
-      buildPiArguments(parsed);
+      buildPiArguments(parsed, undefined, loadCustomFixtures());
       const tokens = stripSaveFlag(argv);
       const command = ["pi-cli", ...tokens.map(shellQuote)].join(" ");
       const destination = saveConfig(parsed.saveName, command);
@@ -87,7 +87,7 @@ export function main(argv = process.argv.slice(2)) {
       parsed = mergeParsedArguments(saved, parsed);
     }
 
-    const piArguments = buildPiArguments(parsed);
+    const piArguments = buildPiArguments(parsed, undefined, loadCustomFixtures());
     const piCommand = process.env.PI_BIN || "pi";
 
     if (parsed.dryRun) {

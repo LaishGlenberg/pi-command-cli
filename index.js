@@ -11,8 +11,11 @@ export {
   resolveSkill,
   saveConfig,
   loadConfig,
+  loadCustomFixtures,
   parseArguments,
   buildPiArguments,
+  resolveCustomExpression,
+  shellSplit,
   main,
 } from "./src/index.js";
 
