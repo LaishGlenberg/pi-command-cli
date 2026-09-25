@@ -150,10 +150,11 @@ Stored command strings are tokenized with `shellSplit` (quote-aware) so a quoted
 Releases are cut entirely in CI by `.github/workflows/release.yml`, which runs
 on every push to `main`:
 
-- If `package.json`'s version changed in the push (a deliberate minor/major bump
-  made in the merged PR), that version is released as-is.
-- Otherwise the workflow bumps the patch version, commits it back to `main` as
+- If the tag for `package.json`'s version (`vX.Y.Z`) already exists, the
+  workflow bumps the patch version, commits it back to `main` as
   `chore(release): vX.Y.Z [skip ci]`, and tags that commit.
+- Otherwise (the version has no tag yet - the first release, or a deliberate
+  minor/major bump merged in a PR) that version is released as-is.
 
 The tag is created in GitHub on a commit that is actually on `main`; never push
 `v*` tags by hand. There is no `npm publish` step (npm disallows publishing via
