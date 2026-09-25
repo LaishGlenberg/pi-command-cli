@@ -40,7 +40,6 @@ From a checkout (local development):
 git clone https://github.com/LaishGlenberg/pi-command-cli.git
 cd pi-command-cli
 npm install
-npm run build
 npm link
 ```
 

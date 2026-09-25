@@ -12,10 +12,10 @@ transparent pass-through for every other `pi` flag.
 ## Commands
 
 ```bash
-npm test             # run the test suite (121 tests, node:test) on the .ts sources
+npm test             # run the test suite (127 tests, node:test) on the .ts sources
 npm run typecheck    # tsc --noEmit (tsconfig.json)
 npm run build        # compile to dist/ for publishing (tsconfig.build.json)
-npm link             # expose `pi-cli` locally (run `npm run build` first)
+npm link             # expose `pi-cli` locally (the prepare script builds first)
 pi-cli --dry-run ... # print the expanded `pi ...` command without spawning
 ```
 
@@ -23,7 +23,9 @@ Written in TypeScript and compiled with `tsc` to `dist/` for publishing; there
 are no runtime dependencies and no bundler. Node >= 22.18, ESM
 (`"type": "module"`). Tests run the `.ts` sources directly through Node's native
 type stripping and use the built-in `node:test` + `node:assert/strict` only.
-`dist/` is generated and gitignored; `bin`/`main` point at `dist/index.js`.
+`dist/` is generated and gitignored; `bin`/`main` point at `dist/index.js`. The
+`prepare` script builds `dist/` on `npm install`/`npm link`, so a fresh checkout
+is runnable without a manual build.
 
 ## Architecture
 
@@ -135,9 +137,31 @@ Stored command strings are tokenized with `shellSplit` (quote-aware) so a quoted
 - Windows matters: never spawn a `.cmd` directly. Route through
   `buildSpawnSpec`/`windowsQuote` (cmd.exe `/d /s /c`) and keep the
   `windowsVerbatimArguments` option.
+- The `build` script marks `dist/index.js` executable: `tsc` emits it `0644`,
+  but a globally linked `pi-cli` runs the file through its shebang and needs
+  `+x`. A bare `tsc` run that skips this step will make the linked bin fail
+  with "Permission denied".
 - `settings.json` is shared with pi. Only touch the `piCli` key (`piCli.agents`
   for saved commands; never clobber `piCli.custom`), write atomically (temp +
   rename) with `0600`, and preserve unrelated keys.
+
+## Releasing
+
+Releases are cut entirely in CI by `.github/workflows/release.yml`, which runs
+on every push to `main`:
+
+- If `package.json`'s version changed in the push (a deliberate minor/major bump
+  made in the merged PR), that version is released as-is.
+- Otherwise the workflow bumps the patch version, commits it back to `main` as
+  `chore(release): vX.Y.Z [skip ci]`, and tags that commit.
+
+The tag is created in GitHub on a commit that is actually on `main`; never push
+`v*` tags by hand. There is no `npm publish` step (npm disallows publishing via
+`GITHUB_TOKEN`), so publishing stays manual. The version decision is a pure
+function in `scripts/release-version.ts`, unit-tested in
+`test/release-version.test.ts`, so the workflow logic stays testable. A bump
+commit is pushed with `GITHUB_TOKEN`, which does not retrigger workflows, so
+the workflow cannot loop on its own commit.
 
 ## Knowledge graph (graphify)
 
