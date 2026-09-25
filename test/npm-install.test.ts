@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,7 +16,11 @@ import { fileURLToPath } from "node:url";
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 
-function run(command, args, options = {}) {
+function run(
+  command: string,
+  args: string[],
+  options: Partial<SpawnSyncOptionsWithStringEncoding> = {},
+) {
   const result = spawnSync(command, args, { encoding: "utf8", ...options });
   if (result.error) throw result.error;
   return result;
@@ -40,15 +44,26 @@ test(
     );
     assert.equal(pack.status, 0, pack.stderr);
 
-    const [info] = JSON.parse(pack.stdout);
+    const packed = JSON.parse(pack.stdout) as Array<{
+      filename: string;
+      files: { path: string }[];
+    }>;
+    const info = packed[0];
+    if (!info) throw new Error("npm pack --json returned no package info");
     const tarball = join(workDir, info.filename);
     assert.ok(existsSync(tarball), `tarball was not created: ${tarball}`);
 
     // The published file list must include the bin entry and every src module.
     const packedPaths = info.files.map((file) => file.path);
-    assert.ok(packedPaths.includes("index.js"), "index.js is missing from the tarball");
-    assert.ok(packedPaths.includes("src/cli/main.js"), "src/cli/main.js is missing from the tarball");
-    assert.ok(packedPaths.includes("src/cli/arguments.js"), "src/cli/arguments.js is missing from the tarball");
+    assert.ok(packedPaths.includes("dist/index.js"), "dist/index.js is missing from the tarball");
+    assert.ok(
+      packedPaths.includes("dist/src/cli/main.js"),
+      "dist/src/cli/main.js is missing from the tarball",
+    );
+    assert.ok(
+      packedPaths.includes("dist/src/cli/arguments.js"),
+      "dist/src/cli/arguments.js is missing from the tarball",
+    );
 
     // 2. Install into a throwaway global prefix. No registry access is needed
     //    because the package has zero dependencies.

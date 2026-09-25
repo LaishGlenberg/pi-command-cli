@@ -1,18 +1,36 @@
-import { BUILTIN_TOOLS, DEFAULT_AGENT_DIR } from "../constants.js";
-import { resolveExtension } from "../resolve/extensions.js";
-import { resolveSkill } from "../resolve/skills.js";
-import { resolveCustomExpression } from "./custom.js";
-import { addBuiltinTools, matchOption } from "./options.js";
+import { BUILTIN_TOOLS, DEFAULT_AGENT_DIR, type BuiltinTool } from "../constants.ts";
+import { resolveExtension } from "../resolve/extensions.ts";
+import { resolveSkill } from "../resolve/skills.ts";
+import { resolveCustomExpression, type CustomFixtures } from "./custom.ts";
+import { addBuiltinTools, matchOption } from "./options.ts";
 
 // A runaway guard for `--custom` fixtures that reference themselves.
 const MAX_CUSTOM_EXPANSIONS = 1000;
 
-export function stripSaveFlag(argv) {
-  const kept = [];
+export interface ParsedArguments {
+  piArguments: string[];
+  useDefaults: boolean;
+  hasExtension: boolean;
+  hasSkill: boolean;
+  builtinTools: BuiltinTool[];
+  nothing: boolean;
+  saveName?: string | undefined;
+  importName?: string | undefined;
+  dryRun: boolean;
+  help?: boolean | undefined;
+  helpi?: boolean | undefined;
+}
+
+export type CustomSource = CustomFixtures | (() => CustomFixtures);
+
+export function stripSaveFlag(argv: string[]): string[] {
+  const kept: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
-    const option = matchOption(argv[index]);
+    const argument = argv[index];
+    if (argument === undefined) continue;
+    const option = matchOption(argument);
     if (option?.key !== "save") {
-      kept.push(argv[index]);
+      kept.push(argument);
       continue;
     }
     // Drop the detached `-S name` value too; attached forms carry it inline.
@@ -21,13 +39,18 @@ export function stripSaveFlag(argv) {
   return kept;
 }
 
-export function mergeParsedArguments(saved, current) {
+export function mergeParsedArguments(
+  saved: ParsedArguments,
+  current: ParsedArguments,
+): ParsedArguments {
   return {
     piArguments: [...saved.piArguments, ...current.piArguments],
     useDefaults: saved.useDefaults && current.useDefaults,
     hasExtension: saved.hasExtension || current.hasExtension,
     hasSkill: saved.hasSkill || current.hasSkill,
-    builtinTools: [...new Set([...(saved.builtinTools ?? []), ...(current.builtinTools ?? [])])],
+    builtinTools: [
+      ...new Set([...(saved.builtinTools ?? []), ...(current.builtinTools ?? [])]),
+    ],
     nothing: saved.nothing || current.nothing,
     dryRun: saved.dryRun || current.dryRun,
   };
@@ -40,21 +63,21 @@ export function mergeParsedArguments(saved, current) {
  * `cli/main.js` and lets saved commands contain arguments with spaces (for
  * example a quoted `--custom` expression).
  */
-export function shellSplit(input) {
-  const tokens = [];
+export function shellSplit(input: string): string[] {
+  const tokens: string[] = [];
   let current = "";
   let hasToken = false;
-  let quote = null;
+  let quote: string | null = null;
 
   for (let index = 0; index < input.length; index += 1) {
-    const character = input[index];
+    const character = input.charAt(index);
 
     if (quote) {
       if (character === quote) {
         quote = null;
       } else if (quote === '"' && character === "\\" && index + 1 < input.length) {
         index += 1;
-        current += input[index];
+        current += input.charAt(index);
       } else {
         current += character;
       }
@@ -79,7 +102,7 @@ export function shellSplit(input) {
 
     if (character === "\\" && index + 1 < input.length) {
       index += 1;
-      current += input[index];
+      current += input.charAt(index);
       hasToken = true;
       continue;
     }
@@ -93,32 +116,48 @@ export function shellSplit(input) {
   return tokens;
 }
 
-export function parseArguments(argv, custom = {}) {
+export function parseArguments(
+  argv: readonly string[],
+  custom: CustomSource = {},
+): ParsedArguments {
   const tokens = [...argv];
-  const piArguments = [];
+  const piArguments: string[] = [];
   let parseOptions = true;
   let useDefaults = true;
-  const groups = new Set();
-  const builtinTools = new Set();
-  let saveName;
-  let importName;
+  const groups = new Set<string>();
+  const builtinTools = new Set<BuiltinTool>();
+  let saveName: string | undefined;
+  let importName: string | undefined;
   let dryRun = false;
   let customExpansions = 0;
 
   // Fixtures may be passed directly or as a lazy loader, so a plain `--help`
   // run never has to read settings.json.
-  let fixtures;
-  const getFixtures = () => {
+  let fixtures: CustomFixtures | undefined;
+  const getFixtures = (): CustomFixtures => {
     if (fixtures === undefined) {
       fixtures = typeof custom === "function" ? custom() : custom;
     }
     return fixtures;
   };
 
+  const snapshot = (extra: Partial<ParsedArguments> = {}): ParsedArguments => ({
+    piArguments,
+    useDefaults,
+    hasExtension: groups.has("extension"),
+    hasSkill: groups.has("skill"),
+    builtinTools: [...builtinTools],
+    nothing: groups.has("nothing"),
+    saveName,
+    importName,
+    dryRun,
+    ...extra,
+  });
+
   // Splice the expanded expression into the token stream in place of the
   // `--custom` wrapper so the result is parsed exactly like typed arguments
   // (an expanded `-e foo` enables extensions and adds `-ne`, and so on).
-  const expandCustom = (index, removeCount, expression) => {
+  const expandCustom = (index: number, removeCount: number, expression: string): void => {
     customExpansions += 1;
     if (customExpansions > MAX_CUSTOM_EXPANSIONS) {
       throw new Error("--custom expanded too many times (possible cycle)");
@@ -128,6 +167,7 @@ export function parseArguments(argv, custom = {}) {
 
   for (let index = 0; index < tokens.length; index += 1) {
     const argument = tokens[index];
+    if (argument === undefined) continue;
 
     if (parseOptions && argument === "--") {
       parseOptions = false;
@@ -143,7 +183,7 @@ export function parseArguments(argv, custom = {}) {
 
     const startIndex = index;
     const { key, flag, requires, inline } = option;
-    const takeValue = () => {
+    const takeValue = (): string => {
       let value = inline;
       if (value === undefined) {
         value = tokens[index + 1];
@@ -154,8 +194,8 @@ export function parseArguments(argv, custom = {}) {
       return value;
     };
 
-    if (key === "help") return { help: true };
-    if (key === "helpi") return { helpi: true };
+    if (key === "help") return snapshot({ help: true });
+    if (key === "helpi") return snapshot({ helpi: true });
 
     if (key === "dryRun") {
       dryRun = true;
@@ -204,35 +244,30 @@ export function parseArguments(argv, custom = {}) {
     }
   }
 
-  return {
-    piArguments,
-    useDefaults,
-    hasExtension: groups.has("extension"),
-    hasSkill: groups.has("skill"),
-    builtinTools: [...builtinTools],
-    nothing: groups.has("nothing"),
-    saveName,
-    importName,
-    dryRun,
-  };
+  return snapshot();
 }
 
 export function buildPiArguments(
-  parsed,
-  agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR,
-) {
+  parsed: ParsedArguments,
+  agentDir: string = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR,
+): string[] {
   if (parsed.help) return [];
 
-  const resolved = [];
+  const resolved: string[] = [];
   for (let index = 0; index < parsed.piArguments.length; index += 1) {
     const argument = parsed.piArguments[index];
+    if (argument === undefined) continue;
 
     resolved.push(argument);
     if (argument === "--extension") {
-      resolved.push(resolveExtension(parsed.piArguments[index + 1], agentDir));
+      const value = parsed.piArguments[index + 1];
+      if (value === undefined) throw new Error("--extension requires a name or path");
+      resolved.push(resolveExtension(value, agentDir));
       index += 1;
     } else if (argument === "--skill") {
-      resolved.push(resolveSkill(parsed.piArguments[index + 1], agentDir));
+      const value = parsed.piArguments[index + 1];
+      if (value === undefined) throw new Error("--skill requires a skill name or path");
+      resolved.push(resolveSkill(value, agentDir));
       index += 1;
     } else if (argument === "--extension=" || argument === "--skill=") {
       // parseArguments normalizes equals syntax, but keep this guard for
@@ -241,7 +276,7 @@ export function buildPiArguments(
     }
   }
 
-  const toolFlags = [];
+  const toolFlags: string[] = [];
   if (parsed.builtinTools && parsed.builtinTools.length > 0) {
     const excluded = BUILTIN_TOOLS.filter((name) => !parsed.builtinTools.includes(name));
     if (excluded.length > 0) toolFlags.push("--exclude-tools", excluded.join(","));
@@ -251,7 +286,7 @@ export function buildPiArguments(
   // Naming a resource disables Pi's automatic discovery for that resource
   // type only. With no -e/-s flags, pi-cli is a transparent pass-through to
   // pi and adds no discovery flags of its own.
-  const discoveryFlags = [];
+  const discoveryFlags: string[] = [];
   if (parsed.hasExtension) discoveryFlags.push("-ne");
   if (parsed.hasSkill) discoveryFlags.push("-ns");
   return [...discoveryFlags, ...toolFlags, ...resolved];

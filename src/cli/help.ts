@@ -1,4 +1,4 @@
-export function printHelp() {
+export function printHelp(): void {
   process.stdout.write(`Usage: pi-cli [options] [pi-options/messages...]\n\n`);
   process.stdout.write(`If you aliased pi-cli as pi and need pi help, run: pi --helpi\n\n`);
   process.stdout.write(`Runs pi with explicit resources and passes normal Pi arguments through.\n`);

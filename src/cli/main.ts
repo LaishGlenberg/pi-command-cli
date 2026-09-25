@@ -1,16 +1,17 @@
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 
 import {
   buildPiArguments,
   mergeParsedArguments,
   parseArguments,
   stripSaveFlag,
-} from "./arguments.js";
-import { loadConfig, loadCustomFixtures, saveConfig } from "../config/config.js";
-import { printHelp } from "./help.js";
-import { printHelpi } from "./pi-help-msg.js";
+  type ParsedArguments,
+} from "./arguments.ts";
+import { loadConfig, loadCustomFixtures, saveConfig } from "../config/config.ts";
+import { printHelp } from "./help.ts";
+import { printHelpi } from "./pi-help-msg.ts";
 
-export function shellQuote(argument) {
+export function shellQuote(argument: string): string {
   if (/^[a-zA-Z0-9_./:@%+=,-]+$/.test(argument)) return argument;
   return `'${argument.replaceAll("'", "'\\''")}'`;
 }
@@ -21,13 +22,19 @@ export function shellQuote(argument) {
  * the closing quote) must be doubled. Note that cmd still expands `%VAR%`
  * inside quotes; that is inherent to running the command through cmd.
  */
-export function windowsQuote(argument) {
+export function windowsQuote(argument: string): string {
   if (argument === "") return '""';
   if (!/[\s"&|<>^()%!]/.test(argument)) return argument;
   const escaped = argument
     .replace(/(\\*)"/g, '$1$1\\"')
     .replace(/(\\+)$/, "$1$1");
   return `"${escaped}"`;
+}
+
+export interface SpawnSpec {
+  file: string;
+  args: string[];
+  options: SpawnOptions;
 }
 
 /**
@@ -37,11 +44,11 @@ export function windowsQuote(argument) {
  * the command line we assembled ourselves.
  */
 export function buildSpawnSpec(
-  command,
-  args,
-  platform = process.platform,
-  comspec = process.env.ComSpec,
-) {
+  command: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  comspec: string | undefined = process.env.ComSpec,
+): SpawnSpec {
   if (platform !== "win32") {
     return { file: command, args: [...args], options: {} };
   }
@@ -53,8 +60,8 @@ export function buildSpawnSpec(
   };
 }
 
-export function main(argv = process.argv.slice(2)) {
-  let parsed;
+export function main(argv: string[] = process.argv.slice(2)): number | undefined {
+  let parsed: ParsedArguments;
   try {
     parsed = parseArguments(argv, () => loadCustomFixtures());
     if (parsed.help) {
@@ -110,7 +117,8 @@ export function main(argv = process.argv.slice(2)) {
     });
     return undefined;
   } catch (error) {
-    process.stderr.write(`pi-cli: ${error.message}\n`);
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`pi-cli: ${message}\n`);
     return 1;
   }
 }

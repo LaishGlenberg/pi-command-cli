@@ -1,4 +1,4 @@
-export function printHelpi() {
+export function printHelpi(): void {
   process.stdout.write(`
 Usage:
   pi [options] [--] [@files...] [messages...]

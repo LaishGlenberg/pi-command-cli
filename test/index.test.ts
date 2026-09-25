@@ -15,8 +15,9 @@ import {
   resolveSkill,
   saveConfig,
   shellSplit,
-} from "../index.js";
-import { buildSpawnSpec, windowsQuote } from "../src/cli/main.js";
+  type ParsedArguments,
+} from "../index.ts";
+import { buildSpawnSpec, windowsQuote } from "../src/cli/main.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -68,8 +69,8 @@ async function fixture() {
   return agentDir;
 }
 
-function withEnv(overrides, fn) {
-  const original = {};
+function withEnv<T>(overrides: NodeJS.ProcessEnv, fn: () => T): T {
+  const original: NodeJS.ProcessEnv = {};
   for (const key of Object.keys(overrides)) {
     original[key] = process.env[key];
     process.env[key] = overrides[key];
@@ -82,6 +83,20 @@ function withEnv(overrides, fn) {
       else process.env[key] = original[key];
     }
   }
+}
+
+/** Build a fully-populated ParsedArguments for buildPiArguments-only tests. */
+function parsedArgs(overrides: Partial<ParsedArguments> = {}): ParsedArguments {
+  return {
+    piArguments: [],
+    useDefaults: true,
+    hasExtension: false,
+    hasSkill: false,
+    builtinTools: [],
+    nothing: false,
+    dryRun: false,
+    ...overrides,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -550,45 +565,53 @@ test("an empty argv returns defaults", () => {
 // ---------------------------------------------------------------------------
 
 test("buildPiArguments returns [] when help is set", () => {
-  assert.deepEqual(buildPiArguments({ help: true, piArguments: [] }, "/tmp/any"), []);
+  assert.deepEqual(buildPiArguments(parsedArgs({ help: true }), "/tmp/any"), []);
 });
 
 test("buildPiArguments throws on --extension= syntax", () => {
-  assert.throws(() => buildPiArguments({
-    piArguments: ["--extension="], useDefaults: true, hasExtension: true, hasSkill: false,
-  }, "/tmp/any"), { message: "--extension requires a name or path" });
+  assert.throws(
+    () =>
+      buildPiArguments(
+        parsedArgs({ piArguments: ["--extension="], hasExtension: true }),
+        "/tmp/any",
+      ),
+    { message: "--extension requires a name or path" },
+  );
 });
 
 test("buildPiArguments throws on --skill= syntax", () => {
-  assert.throws(() => buildPiArguments({
-    piArguments: ["--skill="], useDefaults: true, hasExtension: false, hasSkill: true,
-  }, "/tmp/any"), { message: "--skill requires a name or path" });
+  assert.throws(
+    () =>
+      buildPiArguments(
+        parsedArgs({ piArguments: ["--skill="], hasSkill: true }),
+        "/tmp/any",
+      ),
+    { message: "--skill requires a name or path" },
+  );
 });
 
 test("buildPiArguments adds only -ne when an extension is present but no skill", async () => {
   const agentDir = await fixture();
   const extPath = join(agentDir, "extensions", "local-extension");
-  const parsed = {
+  const parsed = parsedArgs({
     piArguments: ["--extension", extPath],
-    useDefaults: true, hasExtension: true, hasSkill: false,
-  };
+    hasExtension: true,
+  });
   assert.deepEqual(buildPiArguments(parsed, agentDir), ["-ne", "--extension", extPath]);
 });
 
 test("buildPiArguments adds no discovery flags when no resources are named", () => {
-  const parsed = {
-    piArguments: ["--model", "foo"], useDefaults: true, hasExtension: false, hasSkill: false,
-  };
+  const parsed = parsedArgs({ piArguments: ["--model", "foo"] });
   assert.deepEqual(buildPiArguments(parsed, "/tmp/any"), ["--model", "foo"]);
 });
 
 test("buildPiArguments adds only -ns when a skill is present but no extension", async () => {
   const agentDir = await fixture();
   const skillPath = join(agentDir, "skills", "playwright-cli.md");
-  const parsed = {
+  const parsed = parsedArgs({
     piArguments: ["--skill", skillPath],
-    useDefaults: true, hasExtension: false, hasSkill: true,
-  };
+    hasSkill: true,
+  });
   assert.deepEqual(buildPiArguments(parsed, agentDir), ["-ns", "--skill", skillPath]);
 });
 
@@ -596,19 +619,18 @@ test("buildPiArguments adds -ne -ns when both extension and skill are present", 
   const agentDir = await fixture();
   const extPath = join(agentDir, "extensions", "local-extension");
   const skillPath = join(agentDir, "skills", "playwright-cli.md");
-  const parsed = {
+  const parsed = parsedArgs({
     piArguments: ["--extension", extPath, "--skill", skillPath],
-    useDefaults: true, hasExtension: true, hasSkill: true,
-  };
+    hasExtension: true,
+    hasSkill: true,
+  });
   assert.deepEqual(buildPiArguments(parsed, agentDir), [
     "-ne", "-ns", "--extension", extPath, "--skill", skillPath,
   ]);
 });
 
 test("buildPiArguments does not add defaults when useDefaults is false", () => {
-  const parsed = {
-    piArguments: ["--model", "foo"], useDefaults: false, hasExtension: false, hasSkill: false,
-  };
+  const parsed = parsedArgs({ piArguments: ["--model", "foo"], useDefaults: false });
   assert.deepEqual(buildPiArguments(parsed, "/tmp/any"), ["--model", "foo"]);
 });
 

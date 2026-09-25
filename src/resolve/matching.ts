@@ -1,9 +1,9 @@
 import { realpathSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { SOURCE_EXTENSIONS } from "../constants.js";
+import { SOURCE_EXTENSIONS } from "../constants.ts";
 
-export function canonicalPath(path) {
+export function canonicalPath(path: string): string {
   try {
     return realpathSync(path);
   } catch {
@@ -11,23 +11,23 @@ export function canonicalPath(path) {
   }
 }
 
-export function addMatch(matches, path) {
+export function addMatch(matches: string[], path: string): void {
   const candidate = canonicalPath(path);
   if (!matches.includes(candidate)) matches.push(candidate);
 }
 
-export function sourceNameMatches(filename, requested) {
+export function sourceNameMatches(filename: string, requested: string): boolean {
   return (
     filename === requested ||
     [...SOURCE_EXTENSIONS].some((extension) => filename === `${requested}${extension}`)
   );
 }
 
-export function skillFileNameMatches(filename, requested) {
+export function skillFileNameMatches(filename: string, requested: string): boolean {
   return filename === requested || filename === `${requested}.md`;
 }
 
-export function hasSkillFile(directory) {
+export function hasSkillFile(directory: string): boolean {
   const skillPath = join(directory, "SKILL.md");
   try {
     return statSync(skillPath).isFile();
@@ -36,6 +36,6 @@ export function hasSkillFile(directory) {
   }
 }
 
-export function addSkillMatch(matches, path) {
+export function addSkillMatch(matches: string[], path: string): void {
   if (hasSkillFile(path)) addMatch(matches, path);
 }

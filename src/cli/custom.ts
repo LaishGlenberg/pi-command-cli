@@ -5,23 +5,31 @@
  * access path is treated as a literal argument.
  */
 
+export type CustomFixtures = Record<string, unknown>;
+
+type AccessSegment = string | number;
+
+type LookupResult = { found: true; value: unknown } | { found: false };
+
 /**
  * Parse an access path into segments. Returns `null` when the token is not a
  * valid access path, which lets callers treat it as a literal argument.
  */
-function parseAccessPath(path) {
-  const head = /^[A-Za-z_$][\w$]*/.exec(path);
-  if (!head) return null;
+function parseAccessPath(path: string): AccessSegment[] | null {
+  const headMatch = /^[A-Za-z_$][\w$]*/.exec(path);
+  const [head] = headMatch ?? [];
+  if (head === undefined) return null;
 
-  const segments = [head[0]];
-  let rest = path.slice(head[0].length);
+  const segments: AccessSegment[] = [head];
+  let rest = path.slice(head.length);
 
   while (rest.length > 0) {
     if (rest.startsWith(".")) {
       const match = /^\.([A-Za-z_$][\w$]*)/.exec(rest);
-      if (!match) return null;
-      segments.push(match[1]);
-      rest = rest.slice(match[0].length);
+      const [whole, key] = match ?? [];
+      if (whole === undefined || key === undefined) return null;
+      segments.push(key);
+      rest = rest.slice(whole.length);
       continue;
     }
 
@@ -46,27 +54,27 @@ function parseAccessPath(path) {
   return segments;
 }
 
-function lookupCustom(custom, token) {
+function lookupCustom(custom: CustomFixtures, token: string): LookupResult {
   const segments = parseAccessPath(token);
   if (!segments) return { found: false };
 
-  let value = custom;
+  let value: unknown = custom;
   for (const segment of segments) {
     if (value === null || typeof value !== "object" || !Object.hasOwn(value, segment)) {
       return { found: false };
     }
-    value = value[segment];
+    value = (value as Record<AccessSegment, unknown>)[segment];
   }
   return { found: true, value };
 }
 
-function serializeCustomValue(value) {
+function serializeCustomValue(value: unknown): string {
   if (typeof value === "string") return value;
   if (value !== null && typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
 
-function customValueToArguments(value) {
+function customValueToArguments(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(serializeCustomValue);
   return [serializeCustomValue(value)];
 }
@@ -79,12 +87,15 @@ function customValueToArguments(value) {
  * other values are JSON-serialized. Multiple references are allowed; the
  * expression must reference at least one fixture or it is treated as a typo.
  */
-export function resolveCustomExpression(expression, custom = {}) {
-  if (typeof expression !== "string" || expression.trim() === "") {
+export function resolveCustomExpression(
+  expression: string,
+  custom: CustomFixtures = {},
+): string[] {
+  if (expression.trim() === "") {
     throw new Error("--custom requires a value");
   }
 
-  const resolved = [];
+  const resolved: string[] = [];
   let references = 0;
 
   // The shell already stripped the outer quotes, so the expression is a single
