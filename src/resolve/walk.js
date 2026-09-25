@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { SKIPPED_DIRECTORIES } from "./constants.js";
+import { SKIPPED_DIRECTORIES } from "../constants.js";
 
 /**
  * Walk a directory without following dependency trees or git metadata.

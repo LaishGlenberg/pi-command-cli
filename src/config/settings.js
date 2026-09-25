@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { DEFAULT_AGENT_DIR, SETTINGS_FILENAME } from "./constants.js";
+import { DEFAULT_AGENT_DIR, SETTINGS_FILENAME } from "../constants.js";
 
 export function settingsPath() {
   return join(process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR, SETTINGS_FILENAME);

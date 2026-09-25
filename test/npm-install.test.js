@@ -47,8 +47,8 @@ test(
     // The published file list must include the bin entry and every src module.
     const packedPaths = info.files.map((file) => file.path);
     assert.ok(packedPaths.includes("index.js"), "index.js is missing from the tarball");
-    assert.ok(packedPaths.includes("src/cli.js"), "src/cli.js is missing from the tarball");
-    assert.ok(packedPaths.includes("src/arguments.js"), "src/arguments.js is missing from the tarball");
+    assert.ok(packedPaths.includes("src/cli/main.js"), "src/cli/main.js is missing from the tarball");
+    assert.ok(packedPaths.includes("src/cli/arguments.js"), "src/cli/arguments.js is missing from the tarball");
 
     // 2. Install into a throwaway global prefix. No registry access is needed
     //    because the package has zero dependencies.

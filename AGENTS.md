@@ -12,7 +12,7 @@ transparent pass-through for every other `pi` flag.
 ## Commands
 
 ```bash
-node --test          # run the test suite (89 tests, node:test)
+node --test          # run the test suite (121 tests, node:test)
 npm test             # same
 npm link             # expose `pi-cli` locally
 pi-cli --dry-run ... # print the expanded `pi ...` command without spawning
@@ -24,24 +24,29 @@ only.
 
 ## Architecture
 
-Entry flow: `index.js` (bin) → `src/cli.js#main` → `src/arguments.js`.
+Entry flow: `index.js` (bin) → `src/cli/main.js#main` → `src/cli/arguments.js`.
 
 ```
 index.js            Bin entry; runs main() when invoked directly, re-exports public API
 src/
-  index.js          Barrel re-export of the public API (keep in sync with index.js)
-  cli.js            main() orchestration, shell/Windows quoting, child spawn
-  arguments.js      parseArguments + buildPiArguments + --custom expansion
+  index.js          Barrel re-export of the public API (public surface lives here)
   constants.js      Agent dir, settings filename, piCli key, source extensions
-  help.js           `pi-cli --help` text
-  pi-help-msg.js    `pi-cli --helpi` text (pi's own help; keep roughly in sync with pi)
-  settings.js       Atomic, permissioned settings.json read/write
-  config.js         saveConfig/loadConfig on top of settings.js (+ piCli.custom)
-  walk.js           Recursive directory walker (skips node_modules/.git, symlink-safe)
-  packages.js       package.json parsing and "is this a pi extension dir" checks
-  matching.js       Path canonicalization and name-matching helpers
-  extensions.js     Extension name → path resolution
-  skills.js         Skill name → path resolution
+  cli/
+    main.js         main() orchestration, shell/Windows quoting, child spawn
+    arguments.js    stripSaveFlag/merge + parseArguments/buildPiArguments + shellSplit
+    options.js      Option table (FLAG_OPTIONS/VALUE_OPTIONS) + matchOption + -bt validation
+    custom.js       --custom access-path lookup and expansion
+    help.js         `pi-cli --help` text
+    pi-help-msg.js  `pi-cli --helpi` text (pi's own help; keep roughly in sync with pi)
+  resolve/
+    walk.js         Recursive directory walker (skips node_modules/.git, symlink-safe)
+    packages.js     package.json parsing and "is this a pi extension dir" checks
+    matching.js     Path canonicalization and name-matching helpers
+    extensions.js   Extension name → path resolution
+    skills.js       Skill name → path resolution
+  config/
+    settings.js     Atomic, permissioned settings.json read/write
+    config.js       saveConfig/loadConfig on top of settings.js (+ piCli.custom)
 test/index.test.js  All tests
 
 graphify-out/        Committed knowledge graph of this repo (see below)
@@ -49,14 +54,16 @@ graphify-out/        Committed knowledge graph of this repo (see below)
 
 ### Core flow
 
-1. `parseArguments(argv, custom)` walks argv left to right. It handles pi-cli's
-   own flags (`-e`, `-s`, `-bt`/`--built-in-tools`, `-cu`/`--custom`,
-   `-i`/`--import`, `-S`/`--save`, `-n`/`--nothing`, `--no-defaults`,
-   `--dry-run`, help) and pushes everything
-   else, untouched, into `piArguments`. `-e`/`-s` support repeated,
-   comma-separated, `--flag=value`, and attached (`-efoo,bar`) forms, and
-   normalize them to `--extension <value>` / `--skill <value>` pairs.
-   `custom` is either a fixtures object or a lazy `() => fixtures` loader.
+1. `parseArguments(argv, custom)` walks argv left to right. pi-cli's own flags
+   are declared in one option table (`FLAG_OPTIONS` / `VALUE_OPTIONS` in
+   (`options.js`) and matched by `matchOption`, which understands detached
+   (`--flag value`), equals (`--flag=value`), and attached short (`-fvalue`,
+   `-f=value`) spellings. The handled flags are `-e`, `-s`,
+   `-bt`/`--built-in-tools`, `-cu`/`--custom`, `-i`/`--import`, `-S`/`--save`,
+   `-n`/`--nothing`, `--no-defaults`, `--dry-run`, and help; everything else is
+   pushed untouched into `piArguments`. `-e`/`-s` normalize to
+   `--extension <value>` / `--skill <value>` pairs. `custom` is either a
+   fixtures object or a lazy `() => fixtures` loader.
 2. `buildPiArguments(parsed, agentDir)` resolves every `--extension`/`--skill`
    value through `resolveExtension`/`resolveSkill`, then prepends discovery
    flags: `-ne` if any extension was named, `-ns` if any skill was named.
@@ -114,7 +121,8 @@ Stored command strings are tokenized with `shellSplit` (quote-aware) so a quoted
   `pi-cli: <message>` to stderr, returning exit code 1.
 - Resolution must stay deterministic: return an explicit path if it exists,
   otherwise search, and on 0 or >1 matches throw rather than guess.
-- Keep `src/index.js` and `index.js` re-exports aligned when adding public API.
+- Add public API to `src/index.js` only; `index.js` re-exports it with
+  `export *`, so the two lists cannot drift.
 - Windows matters: never spawn a `.cmd` directly. Route through
   `buildSpawnSpec`/`windowsQuote` (cmd.exe `/d /s /c`) and keep the
   `windowsVerbatimArguments` option.
@@ -131,8 +139,11 @@ committed artifact.
 
 - **Query before grepping.** For architecture questions ("what calls X",
   "how does resolution flow"), use the graph first: the `graphify` skill, or
-  `graphify query "<question>"`. `GRAPH_REPORT.md` has the human-readable
-  summary (god nodes, communities, gaps).
+  `graphify query "<question>"` / `graphify god-nodes`.
+- **Scope with `.graphifyignore`.** The repo-root `.graphifyignore` (gitignore
+  syntax, applied on top of `.gitignore`) currently excludes `test/` and `*.md`
+  so the graph stays code-only and `graphify update` needs no LLM. Edit it to
+  change what is graphed, then rerun `graphify update .` to apply.
 - **Refresh after meaningful changes.** Run the graphify skill with `--update`
   (e.g. `/graphify . --update`) after adding/moving files or changing module
   structure, then commit the regenerated artifacts. Pure code changes are
@@ -142,7 +153,11 @@ committed artifact.
   `.graphify_labels.json`.
 - **Ignored (machine-specific):** `cache/`, `memory/`, `reflections/`,
   `cost.json`, `.vocab.txt`, `.graphify_python`, `.graphify_root`,
-  `.graphify_learning.json`. Never commit these.
+  `.graphify_labels.json.sig`, dated pre-overwrite snapshots
+  (`graphify-out/YYYY-MM-DD/`), and `.graphify_learning.json`. Never commit these.
+- The generated `GRAPH_REPORT.md` (and its "surprising connections" /
+  suggested-questions heuristics) is not actively maintained; prefer querying
+  `graph.json`. Use `graphify update .` for the no-LLM code re-extraction.
 - `manifest.json` stores per-file `ast_hash`/`semantic_hash` used for
   incremental updates. Don't hand-edit it or the graph; regenerate instead.
 
@@ -164,5 +179,5 @@ committed artifact.
 ## Documentation
 
 Update `README.md` whenever user-facing behavior changes (flags, expansion
-rules, config format, supported platforms). Keep `src/help.js` in sync with the
+rules, config format, supported platforms). Keep `src/cli/help.js` in sync with the
 actual options, and add a usage example for any new flag.

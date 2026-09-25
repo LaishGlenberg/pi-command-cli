@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 
-import { SOURCE_EXTENSIONS } from "./constants.js";
+import { SOURCE_EXTENSIONS } from "../constants.js";
 import { walkEntries } from "./walk.js";
 
 export function readPackageJson(directory) {
