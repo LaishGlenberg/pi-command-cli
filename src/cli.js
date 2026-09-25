@@ -6,7 +6,7 @@ import {
   parseArguments,
   stripSaveFlag,
 } from "./arguments.js";
-import { loadConfig, saveConfig } from "./config.js";
+import { loadConfig, loadCustomFixtures, saveConfig } from "./config.js";
 import { printHelp } from "./help.js";
 import { printHelpi } from "./pi-help-msg.js";
 
@@ -56,7 +56,7 @@ export function buildSpawnSpec(
 export function main(argv = process.argv.slice(2)) {
   let parsed;
   try {
-    parsed = parseArguments(argv);
+    parsed = parseArguments(argv, () => loadCustomFixtures());
     if (parsed.help) {
       printHelp();
       return 0;

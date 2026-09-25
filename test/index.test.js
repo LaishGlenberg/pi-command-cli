@@ -7,13 +7,15 @@ import test from "node:test";
 import {
   buildPiArguments,
   loadConfig,
+  loadCustomFixtures,
   main,
   parseArguments,
+  resolveCustomExpression,
   resolveExtension,
   resolveSkill,
   saveConfig,
-} from "../index.js";
-import { buildSpawnSpec, windowsQuote } from "../src/cli.js";
+  shellSplit,
+} from "../index.js";import { buildSpawnSpec, windowsQuote } from "../src/cli.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -596,13 +598,13 @@ test("buildPiArguments does not add defaults when useDefaults is false", () => {
 // saveConfig / loadConfig (using settings.json)
 // ---------------------------------------------------------------------------
 
-test("saveConfig writes command strings to settings.json under piCli", async () => {
+test("saveConfig writes command strings to settings.json under piCli.agents", async () => {
   const agentDir = await fixture();
   const settingsFile = join(agentDir, "settings.json");
 
   saveConfig("a1", "pi-cli -e pi-intercom,rtk -s playwright-cli", settingsFile);
   const settings = JSON.parse(await readFile(settingsFile, "utf8"));
-  assert.equal(settings.piCli["a1"], "pi-cli -e pi-intercom,rtk -s playwright-cli");
+  assert.equal(settings.piCli.agents["a1"], "pi-cli -e pi-intercom,rtk -s playwright-cli");
 });
 
 test("saveConfig creates settings.json if it does not exist", async () => {
@@ -611,7 +613,7 @@ test("saveConfig creates settings.json if it does not exist", async () => {
 
   saveConfig("x", "pi-cli --model google/gemini", settingsFile);
   const settings = JSON.parse(await readFile(settingsFile, "utf8"));
-  assert.equal(settings.piCli["x"], "pi-cli --model google/gemini");
+  assert.equal(settings.piCli.agents["x"], "pi-cli --model google/gemini");
 });
 
 test("saveConfig preserves existing settings keys", async () => {
@@ -623,7 +625,7 @@ test("saveConfig preserves existing settings keys", async () => {
   const settings = JSON.parse(await readFile(settingsFile, "utf8"));
   assert.equal(settings.theme, "dark");
   assert.deepEqual(settings.enabledModels, ["a/b"]);
-  assert.equal(settings.piCli["x"], "pi-cli -e pi-intercom");
+  assert.equal(settings.piCli.agents["x"], "pi-cli -e pi-intercom");
 });
 
 test("saveConfig rejects invalid config names", async () => {
@@ -718,6 +720,206 @@ test("loadConfig throws when settings.json has no piCli key", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// custom fixtures (--custom / piCli.custom)
+// ---------------------------------------------------------------------------
+
+test("--custom expands inline and the wrapper is removed", () => {
+  const parsed = parseArguments(["--custom", "--system-prompt sys[0]", "hi"], {
+    sys: ["a prompt"],
+  });
+  assert.deepEqual(parsed.piArguments, ["--system-prompt", "a prompt", "hi"]);
+});
+
+test("-cu and equals forms expand like --custom", () => {
+  const custom = { x: ["--model", "provider/x"] };
+  assert.deepEqual(parseArguments(["-cu", "x"], custom).piArguments, ["--model", "provider/x"]);
+  assert.deepEqual(parseArguments(["--custom=x"], custom).piArguments, ["--model", "provider/x"]);
+  assert.deepEqual(parseArguments(["-cux"], custom).piArguments, ["--model", "provider/x"]);
+});
+
+test("--custom tokens are re-processed like typed flags", async () => {
+  const agentDir = await fixture();
+  const parsed = parseArguments(["--custom", "-e exts[2]"], {
+    exts: [null, null, "pi-intercom"],
+  });
+  assert.deepEqual(parsed.piArguments, ["--extension", "pi-intercom"]);
+  assert.equal(parsed.hasExtension, true);
+  assert.deepEqual(buildPiArguments(parsed, agentDir), [
+    "-ne",
+    "--extension",
+    join(agentDir, "npm", "node_modules", "pi-intercom"),
+  ]);
+});
+
+test("--custom supports multiple references in one expression", () => {
+  const custom = { prompt: "be terse", exts: ["pi-intercom", "rtk"] };
+  const parsed = parseArguments(
+    ["--custom", "--system-prompt prompt -e exts[0] -e exts[1]"],
+    custom,
+  );
+  assert.deepEqual(parsed.piArguments, [
+    "--system-prompt",
+    "be terse",
+    "--extension",
+    "pi-intercom",
+    "--extension",
+    "rtk",
+  ]);
+  assert.equal(parsed.hasExtension, true);
+});
+
+test("--custom after -- is passed through literally", () => {
+  const parsed = parseArguments(["--", "--custom", "x"], { x: ["nope"] });
+  assert.deepEqual(parsed.piArguments, ["--", "--custom", "x"]);
+});
+
+test("--custom without a value throws", () => {
+  assert.throws(() => parseArguments(["--custom"]), { message: "--custom requires a value" });
+});
+
+test("resolveCustomExpression substitutes a field reference", () => {
+  const custom = { sys_prompts: ["a long prompt"], model: "provider/x" };
+  assert.deepEqual(resolveCustomExpression("--system-prompt sys_prompts[0]", custom), [
+    "--system-prompt",
+    "a long prompt",
+  ]);
+  assert.deepEqual(resolveCustomExpression("--model model", custom), ["--model", "provider/x"]);
+});
+
+test("resolveCustomExpression supports nested paths and string keys", () => {
+  const custom = { agents: { reviewer: { prompt: "review please" } } };
+  assert.deepEqual(
+    resolveCustomExpression("--system-prompt agents.reviewer['prompt']", custom),
+    ["--system-prompt", "review please"],
+  );
+});
+
+test("resolveCustomExpression spreads arrays and serializes objects", () => {
+  const custom = { args: ["--model", "provider/x"], opts: { temperature: 0.2 } };
+  assert.deepEqual(resolveCustomExpression("args", custom), ["--model", "provider/x"]);
+  assert.deepEqual(resolveCustomExpression("--json opts", custom), [
+    "--json",
+    '{"temperature":0.2}',
+  ]);
+});
+
+test("resolveCustomExpression substitutes multiple references", () => {
+  const custom = { prompt: "be terse", exts: ["a", "b", "c"] };
+  assert.deepEqual(
+    resolveCustomExpression("--system-prompt prompt -e exts[2]", custom),
+    ["--system-prompt", "be terse", "-e", "c"],
+  );
+});
+
+test("resolveCustomExpression throws when the fixture is missing", () => {
+  assert.throws(() => resolveCustomExpression("--system-prompt nope[0]", {}), {
+    message: /custom fixture not found: --system-prompt nope\[0\]/,
+  });
+});
+
+test("shellSplit handles quotes and escapes", () => {
+  assert.deepEqual(shellSplit("pi-cli --custom '--system-prompt sys[0]' hi"), [
+    "pi-cli",
+    "--custom",
+    "--system-prompt sys[0]",
+    "hi",
+  ]);
+  assert.deepEqual(shellSplit('a "b c" d\\ e'), ["a", "b c", "d e"]);
+  assert.deepEqual(shellSplit("''"), [""]);
+  assert.throws(() => shellSplit("'unterminated"), { message: /unterminated quote/ });
+});
+
+test("parseArguments expands --custom and buildPiArguments resolves the result", async () => {
+  const agentDir = await fixture();
+  const parsed = parseArguments(["-e", "pi-intercom", "--custom", "--system-prompt sys[0]"], {
+    sys: ["hello world"],
+  });
+  assert.deepEqual(buildPiArguments(parsed, agentDir), [
+    "-ne",
+    "--extension",
+    join(agentDir, "npm", "node_modules", "pi-intercom"),
+    "--system-prompt",
+    "hello world",
+  ]);
+});
+
+test("saveConfig nests commands under piCli.agents and preserves custom", async () => {
+  const agentDir = await fixture();
+  const settingsFile = join(agentDir, "settings.json");
+  await writeFile(
+    settingsFile,
+    JSON.stringify({ theme: "dark", piCli: { custom: { sys: ["hi"] } } }),
+  );
+
+  saveConfig("reviewer", "pi-cli -e pi-intercom", settingsFile);
+  const settings = JSON.parse(await readFile(settingsFile, "utf8"));
+  assert.equal(settings.theme, "dark");
+  assert.deepEqual(settings.piCli.custom, { sys: ["hi"] });
+  assert.equal(settings.piCli.agents.reviewer, "pi-cli -e pi-intercom");
+});
+
+test("loadConfig reads nested agents and expands quoted custom expressions", async () => {
+  const agentDir = await fixture();
+  const settingsFile = join(agentDir, "settings.json");
+  await writeFile(
+    settingsFile,
+    JSON.stringify({
+      piCli: {
+        custom: { sys: ["hi"] },
+        agents: { reviewer: "pi-cli --custom '--system-prompt sys[0]'" },
+      },
+    }),
+  );
+
+  const loaded = loadConfig("reviewer", settingsFile);
+  assert.deepEqual(loaded.piArguments, ["--system-prompt", "hi"]);
+});
+
+test("loadConfig still reads legacy flat piCli configs", async () => {
+  const agentDir = await fixture();
+  const settingsFile = join(agentDir, "settings.json");
+  await writeFile(settingsFile, JSON.stringify({ piCli: { legacy: "pi-cli -e pi-intercom" } }));
+
+  const loaded = loadConfig("legacy", settingsFile);
+  assert.deepEqual(loaded.piArguments, ["--extension", "pi-intercom"]);
+});
+
+test("loadCustomFixtures reads piCli.custom", async () => {
+  const agentDir = await fixture();
+  const settingsFile = join(agentDir, "settings.json");
+  await writeFile(settingsFile, JSON.stringify({ piCli: { custom: { sys: ["hi"] } } }));
+
+  assert.deepEqual(loadCustomFixtures(settingsFile), { sys: ["hi"] });
+  assert.deepEqual(loadCustomFixtures(join(agentDir, "missing.json")), {});
+});
+
+test("main expands --custom fixtures from settings.json on --dry-run", async () => {
+  const agentDir = await fixture();
+  await writeFile(
+    join(agentDir, "settings.json"),
+    JSON.stringify({ piCli: { custom: { sys: ["hello world"] } } }),
+  );
+
+  const originalWrite = process.stdout.write;
+  let output = "";
+  process.stdout.write = (chunk) => {
+    output += chunk;
+    return true;
+  };
+  let result;
+  try {
+    result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
+      main(["--custom", "--system-prompt sys[0]", "--dry-run"]),
+    );
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  assert.equal(result, 0);
+  assert.equal(output, "pi --system-prompt 'hello world'\n");
+});
+
+// ---------------------------------------------------------------------------
 // main()
 // ---------------------------------------------------------------------------
 
@@ -746,7 +948,7 @@ test("main saves config and returns 0 when --save is used", async () => {
   const settings = JSON.parse(
     await readFile(join(agentDir, "settings.json"), "utf8"),
   );
-  assert.equal(settings.piCli["myconfig"], "pi-cli -e pi-intercom");
+  assert.equal(settings.piCli.agents["myconfig"], "pi-cli -e pi-intercom");
 });
 
 test("main saves config with -S shorthand", async () => {
@@ -758,7 +960,7 @@ test("main saves config with -S shorthand", async () => {
   const settings = JSON.parse(
     await readFile(join(agentDir, "settings.json"), "utf8"),
   );
-  assert.equal(settings.piCli["my-skill-config"], "pi-cli -s playwright-cli");
+  assert.equal(settings.piCli.agents["my-skill-config"], "pi-cli -s playwright-cli");
 });
 
 test("main prints the command and returns 0 on --dry-run", async () => {
@@ -778,6 +980,38 @@ test("main imports and merges a saved config", async () => {
     main(["--import", "base", "--dry-run"]),
   );
   assert.equal(result, 0);
+});
+
+test("main round-trips a --custom saved config through --import", async () => {
+  const agentDir = await fixture();
+  await writeFile(
+    join(agentDir, "settings.json"),
+    JSON.stringify({ piCli: { custom: { sys: ["hello world"] } } }),
+  );
+
+  withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
+    main(["--custom", "--system-prompt sys[0]", "--save", "reviewer"]),
+  );
+  const settings = JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"));
+  assert.equal(settings.piCli.agents.reviewer, "pi-cli --custom '--system-prompt sys[0]'");
+
+  const originalWrite = process.stdout.write;
+  let output = "";
+  process.stdout.write = (chunk) => {
+    output += chunk;
+    return true;
+  };
+  let result;
+  try {
+    result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
+      main(["--import", "reviewer", "--dry-run"]),
+    );
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  assert.equal(result, 0);
+  assert.equal(output, "pi --system-prompt 'hello world'\n");
 });
 
 test("main returns 1 when the extension cannot be resolved", async () => {

@@ -31,12 +31,12 @@ index.js            Bin entry; runs main() when invoked directly, re-exports pub
 src/
   index.js          Barrel re-export of the public API (keep in sync with index.js)
   cli.js            main() orchestration, shell/Windows quoting, child spawn
-  arguments.js      parseArguments + buildPiArguments (the core logic)
+  arguments.js      parseArguments + buildPiArguments + --custom expansion
   constants.js      Agent dir, settings filename, piCli key, source extensions
   help.js           `pi-cli --help` text
   pi-help-msg.js    `pi-cli --helpi` text (pi's own help; keep roughly in sync with pi)
   settings.js       Atomic, permissioned settings.json read/write
-  config.js         saveConfig/loadConfig on top of settings.js
+  config.js         saveConfig/loadConfig on top of settings.js (+ piCli.custom)
   walk.js           Recursive directory walker (skips node_modules/.git, symlink-safe)
   packages.js       package.json parsing and "is this a pi extension dir" checks
   matching.js       Path canonicalization and name-matching helpers
@@ -49,12 +49,14 @@ graphify-out/        Committed knowledge graph of this repo (see below)
 
 ### Core flow
 
-1. `parseArguments(argv)` walks argv left to right. It handles pi-cli's own
-   flags (`-e`, `-s`, `-bt`/`--built-in-tools`, `-i`/`--import`, `-S`/`--save`,
-   `-n`/`--nothing`, `--no-defaults`, `--dry-run`, help) and pushes everything
+1. `parseArguments(argv, custom)` walks argv left to right. It handles pi-cli's
+   own flags (`-e`, `-s`, `-bt`/`--built-in-tools`, `-cu`/`--custom`,
+   `-i`/`--import`, `-S`/`--save`, `-n`/`--nothing`, `--no-defaults`,
+   `--dry-run`, help) and pushes everything
    else, untouched, into `piArguments`. `-e`/`-s` support repeated,
    comma-separated, `--flag=value`, and attached (`-efoo,bar`) forms, and
    normalize them to `--extension <value>` / `--skill <value>` pairs.
+   `custom` is either a fixtures object or a lazy `() => fixtures` loader.
 2. `buildPiArguments(parsed, agentDir)` resolves every `--extension`/`--skill`
    value through `resolveExtension`/`resolveSkill`, then prepends discovery
    flags: `-ne` if any extension was named, `-ns` if any skill was named.
@@ -82,6 +84,27 @@ Caveat to preserve: `--exclude-tools` only removes; Pi's default built-ins are
 `read, bash, edit, write`, so `grep`/`find`/`ls` must be enabled via the
 `defaultTools` setting before `-bt` can keep them.
 
+### Custom fixtures (`--custom`)
+
+`piCli.custom` holds arbitrary JSON. `-cu`/`--custom` takes one argv element
+containing an argument list in which any token may be a JavaScript-style access
+path (e.g. `sys_prompts[0]`, `opts.nested['x']`) into `piCli.custom`.
+`parseArguments` expands it against the fixtures, **splices the result into the
+token stream, and re-parses it as if typed on the command line** — so pi-cli
+flags inside a `--custom` expression (`-e`, `-s`, `-bt`, nested `--custom`, …)
+are honored, including the discovery flags they imply. Strings substitute as-is,
+arrays spread into separate args, other values are JSON-serialized; multiple
+references are allowed, unresolved tokens pass through, and an expression that
+resolves nothing throws. `buildPiArguments` no longer handles `--custom`; after
+`--` the wrapper is a literal argument forwarded to pi.
+
+### Saved config storage
+
+Saved commands live under `piCli.agents.<name>`; `piCli.custom` is reserved and
+must be preserved. `loadConfig` also reads legacy flat `piCli.<name>` entries.
+Stored command strings are tokenized with `shellSplit` (quote-aware) so a quoted
+`--custom` value round-trips.
+
 ## Conventions
 
 - Plain ESM, named exports, no classes, no external deps. Prefer small pure
@@ -95,8 +118,9 @@ Caveat to preserve: `--exclude-tools` only removes; Pi's default built-ins are
 - Windows matters: never spawn a `.cmd` directly. Route through
   `buildSpawnSpec`/`windowsQuote` (cmd.exe `/d /s /c`) and keep the
   `windowsVerbatimArguments` option.
-- `settings.json` is shared with pi. Only touch the `piCli` key, write
-  atomically (temp + rename) with `0600`, and preserve unrelated keys.
+- `settings.json` is shared with pi. Only touch the `piCli` key (`piCli.agents`
+  for saved commands; never clobber `piCli.custom`), write atomically (temp +
+  rename) with `0600`, and preserve unrelated keys.
 
 ## Knowledge graph (graphify)
 
@@ -128,7 +152,9 @@ committed artifact.
   agent dir (npm/git/extensions/skills trees) and `withEnv` to set
   `PI_AGENT_DIR` / `PI_BIN`.
 - Prefer asserting on `parseArguments` output and `buildPiArguments` output
-  rather than spawning pi. `main()` tests capture stdout/stderr and set env.
+  rather than spawning pi. `parseArguments(argv, custom)` takes fixture data (or
+  a loader) for `--custom` tests. `main()` tests capture
+  stdout/stderr and set env.
 - `test/npm-install.test.js` is an integration test: it runs `npm pack`, installs
   the tarball into a throwaway global prefix, and runs the installed `pi-cli`
   bin. Keep it in sync when `files`, `bin`, or the entry point change. It skips

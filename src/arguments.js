@@ -2,6 +2,9 @@ import { BUILTIN_TOOLS, DEFAULT_AGENT_DIR } from "./constants.js";
 import { resolveExtension } from "./extensions.js";
 import { resolveSkill } from "./skills.js";
 
+// A runaway guard for `--custom` fixtures that reference themselves.
+const MAX_CUSTOM_EXPANSIONS = 1000;
+
 export function stripSaveFlag(argv) {
   const kept = [];
   let index = 0;
@@ -53,7 +56,170 @@ function addBuiltinTools(builtinTools, requested, flag) {
   }
 }
 
-export function parseArguments(argv) {
+/**
+ * Split a shell-like command string into argv tokens. Single quotes are
+ * literal, double quotes allow backslash escapes, and a backslash escapes the
+ * next character outside quotes. This is the inverse of `shellQuote` in cli.js
+ * and lets saved commands contain arguments with spaces (for example a
+ * quoted `--custom` expression).
+ */
+export function shellSplit(input) {
+  const tokens = [];
+  let current = "";
+  let hasToken = false;
+  let quote = null;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const character = input[index];
+
+    if (quote) {
+      if (character === quote) {
+        quote = null;
+      } else if (quote === '"' && character === "\\" && index + 1 < input.length) {
+        index += 1;
+        current += input[index];
+      } else {
+        current += character;
+      }
+      hasToken = true;
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      hasToken = true;
+      continue;
+    }
+
+    if (/\s/.test(character)) {
+      if (hasToken) {
+        tokens.push(current);
+        current = "";
+        hasToken = false;
+      }
+      continue;
+    }
+
+    if (character === "\\" && index + 1 < input.length) {
+      index += 1;
+      current += input[index];
+      hasToken = true;
+      continue;
+    }
+
+    current += character;
+    hasToken = true;
+  }
+
+  if (quote) throw new Error("unterminated quote in command");
+  if (hasToken) tokens.push(current);
+  return tokens;
+}
+
+/**
+ * Parse a JavaScript-style access path such as `sys_prompts[0]` or
+ * `config.options.deep` into segments. Returns `null` when the token is not a
+ * valid access path, which lets callers treat it as a literal argument.
+ */
+function parseAccessPath(path) {
+  const head = /^[A-Za-z_$][\w$]*/.exec(path);
+  if (!head) return null;
+
+  const segments = [head[0]];
+  let rest = path.slice(head[0].length);
+
+  while (rest.length > 0) {
+    if (rest.startsWith(".")) {
+      const match = /^\.([A-Za-z_$][\w$]*)/.exec(rest);
+      if (!match) return null;
+      segments.push(match[1]);
+      rest = rest.slice(match[0].length);
+      continue;
+    }
+
+    if (rest.startsWith("[")) {
+      const end = rest.indexOf("]");
+      if (end === -1) return null;
+      const inner = rest.slice(1, end).trim();
+      if (/^\d+$/.test(inner)) {
+        segments.push(Number(inner));
+      } else if (/^(["']).*\1$/.test(inner)) {
+        segments.push(inner.slice(1, -1));
+      } else {
+        return null;
+      }
+      rest = rest.slice(end + 1);
+      continue;
+    }
+
+    return null;
+  }
+
+  return segments;
+}
+
+function lookupCustom(custom, token) {
+  const segments = parseAccessPath(token);
+  if (!segments) return { found: false };
+
+  let value = custom;
+  for (const segment of segments) {
+    if (value === null || typeof value !== "object" || !Object.hasOwn(value, segment)) {
+      return { found: false };
+    }
+    value = value[segment];
+  }
+  return { found: true, value };
+}
+
+function serializeCustomValue(value) {
+  if (typeof value === "string") return value;
+  if (value !== null && typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function customValueToArguments(value) {
+  if (Array.isArray(value)) return value.map(serializeCustomValue);
+  return [serializeCustomValue(value)];
+}
+
+/**
+ * Expand a `--custom` expression against the user's `piCli.custom` fixtures.
+ * The expression is a small argument list in which any token may be an access
+ * path such as `sys_prompts[0]`; each such token is replaced by the referenced
+ * value. Strings pass through, arrays spread into separate arguments, and
+ * other values are JSON-serialized. Multiple references are allowed; the
+ * expression must reference at least one fixture or it is treated as a typo.
+ */
+export function resolveCustomExpression(expression, custom = {}) {
+  if (typeof expression !== "string" || expression.trim() === "") {
+    throw new Error("--custom requires a value");
+  }
+
+  const resolved = [];
+  let references = 0;
+
+  // The shell already stripped the outer quotes, so the expression is a single
+  // argv element. Split on whitespace without re-interpreting inner quotes;
+  // bracket-quoted access keys like `obj['prompt']` are part of the path.
+  for (const token of expression.trim().split(/\s+/)) {
+    const lookup = lookupCustom(custom, token);
+    if (!lookup.found) {
+      resolved.push(token);
+      continue;
+    }
+    references += 1;
+    resolved.push(...customValueToArguments(lookup.value));
+  }
+
+  if (references === 0) {
+    throw new Error(`custom fixture not found: ${expression}`);
+  }
+  return resolved;
+}
+
+export function parseArguments(argv, custom = {}) {
+  const tokens = [...argv];
   const piArguments = [];
   let parseOptions = true;
   let useDefaults = true;
@@ -62,9 +228,31 @@ export function parseArguments(argv) {
   let saveName;
   let importName;
   let dryRun = false;
+  let customExpansions = 0;
 
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
+  // Fixtures may be passed directly or as a lazy loader, so a plain `--help`
+  // run never has to read settings.json.
+  let fixtures;
+  const getFixtures = () => {
+    if (fixtures === undefined) {
+      fixtures = typeof custom === "function" ? custom() : custom;
+    }
+    return fixtures;
+  };
+
+  // Splice the expanded expression into the token stream in place of the
+  // `--custom` wrapper so the result is parsed exactly like typed arguments
+  // (an expanded `-e foo` enables extensions and adds `-ne`, and so on).
+  const expandCustom = (index, removeCount, expression) => {
+    customExpansions += 1;
+    if (customExpansions > MAX_CUSTOM_EXPANSIONS) {
+      throw new Error("--custom expanded too many times (possible cycle)");
+    }
+    tokens.splice(index, removeCount, ...resolveCustomExpression(expression, getFixtures()));
+  };
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const argument = tokens[index];
 
     if (parseOptions && argument === "--") {
       parseOptions = false;
@@ -93,7 +281,7 @@ export function parseArguments(argv) {
     }
 
     if (parseOptions && (argument === "--built-in-tools" || argument === "-bt")) {
-      const requested = argv[index + 1];
+      const requested = tokens[index + 1];
       if (requested === undefined) {
         throw new Error(`${argument} requires a comma-separated list of built-in tools`);
       }
@@ -114,7 +302,7 @@ export function parseArguments(argv) {
     }
 
     if (parseOptions && (argument === "--save" || argument === "--import" || argument === "-i" || argument === "-S")) {
-      const name = argv[index + 1];
+      const name = tokens[index + 1];
       if (name === undefined) {
         throw new Error(`${argument} requires a config name`);
       }
@@ -147,9 +335,35 @@ export function parseArguments(argv) {
       continue;
     }
 
+    if (parseOptions && (argument === "--custom" || argument === "-cu")) {
+      const expression = tokens[index + 1];
+      if (expression === undefined) {
+        throw new Error(`${argument} requires a value`);
+      }
+      expandCustom(index, 2, expression);
+      index -= 1;
+      continue;
+    }
+
+    if (parseOptions && argument.startsWith("--custom=")) {
+      const expression = argument.slice("--custom=".length);
+      if (!expression) throw new Error("--custom requires a value");
+      expandCustom(index, 1, expression);
+      index -= 1;
+      continue;
+    }
+
+    if (parseOptions && argument.startsWith("-cu") && argument.length > 3) {
+      const expression = argument.startsWith("-cu=") ? argument.slice(4) : argument.slice(3);
+      if (!expression) throw new Error("-cu requires a value");
+      expandCustom(index, 1, expression);
+      index -= 1;
+      continue;
+    }
+
     if (parseOptions && (argument === "--extension" || argument === "-e")) {
       groups.add("extension");
-      const requested = argv[index + 1];
+      const requested = tokens[index + 1];
       if (requested === undefined) {
         throw new Error(`${argument} requires an extension name or path`);
       }
@@ -180,7 +394,7 @@ export function parseArguments(argv) {
 
     if (parseOptions && (argument === "--skill" || argument === "-s")) {
       groups.add("skill");
-      const requested = argv[index + 1];
+      const requested = tokens[index + 1];
       if (requested === undefined) {
         throw new Error(`${argument} requires a skill name or path`);
       }
@@ -225,12 +439,16 @@ export function parseArguments(argv) {
   };
 }
 
-export function buildPiArguments(parsed, agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR) {
+export function buildPiArguments(
+  parsed,
+  agentDir = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR,
+) {
   if (parsed.help) return [];
 
   const resolved = [];
   for (let index = 0; index < parsed.piArguments.length; index += 1) {
     const argument = parsed.piArguments[index];
+
     resolved.push(argument);
     if (argument === "--extension") {
       resolved.push(resolveExtension(parsed.piArguments[index + 1], agentDir));
