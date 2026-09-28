@@ -1,4 +1,4 @@
-import { BUILTIN_TOOLS, DEFAULT_AGENT_DIR, type BuiltinTool } from "../constants.ts";
+import { BUILTIN_TOOLS, resolveAgentDir, type BuiltinTool } from "../constants.ts";
 import { resolveExtension } from "../resolve/extensions.ts";
 import { resolveSkill } from "../resolve/skills.ts";
 import { resolveCustomExpression, type CustomFixtures } from "./custom.ts";
@@ -17,6 +17,7 @@ export interface ParsedArguments {
   saveName?: string | undefined;
   importName?: string | undefined;
   dryRun: boolean;
+  configMode: boolean;
   help?: boolean | undefined;
   helpi?: boolean | undefined;
 }
@@ -53,6 +54,7 @@ export function mergeParsedArguments(
     ],
     nothing: saved.nothing || current.nothing,
     dryRun: saved.dryRun || current.dryRun,
+    configMode: saved.configMode || current.configMode,
   };
 }
 
@@ -129,6 +131,7 @@ export function parseArguments(
   let saveName: string | undefined;
   let importName: string | undefined;
   let dryRun = false;
+  let configMode = false;
   let customExpansions = 0;
 
   // Fixtures may be passed directly or as a lazy loader, so a plain `--help`
@@ -151,6 +154,7 @@ export function parseArguments(
     saveName,
     importName,
     dryRun,
+    configMode,
     ...extra,
   });
 
@@ -202,6 +206,11 @@ export function parseArguments(
       continue;
     }
 
+    if (key === "config") {
+      configMode = true;
+      continue;
+    }
+
     if (key === "noDefaults") {
       useDefaults = false;
       continue;
@@ -249,7 +258,7 @@ export function parseArguments(
 
 export function buildPiArguments(
   parsed: ParsedArguments,
-  agentDir: string = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR,
+  agentDir: string = resolveAgentDir(),
 ): string[] {
   if (parsed.help) return [];
 

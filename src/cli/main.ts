@@ -8,6 +8,7 @@ import {
   type ParsedArguments,
 } from "./arguments.ts";
 import { loadConfig, loadCustomFixtures, saveConfig } from "../config/config.ts";
+import { runConfigCommand } from "./config-cmd.ts";
 import { printHelp } from "./help.ts";
 import { printHelpi } from "./pi-help-msg.ts";
 
@@ -72,6 +73,10 @@ export function main(argv: string[] = process.argv.slice(2)): number | undefined
     if (parsed.helpi) {
       printHelpi();
       return 0;
+    }
+
+    if (parsed.configMode) {
+      return runConfigCommand(parsed.piArguments);
     }
 
     if (parsed.saveName && parsed.importName) {

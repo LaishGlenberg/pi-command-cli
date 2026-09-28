@@ -4,6 +4,15 @@ import { join } from "node:path";
 export const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
 export const SETTINGS_FILENAME = "settings.json";
 export const PI_CLI_KEY = "piCli";
+
+/**
+ * Resolve the pi agent directory. `PI_AGENT_DIR` is pi-cli's historical
+ * override; `PI_CODING_AGENT_DIR` is the variable pi itself documents, so
+ * honor it as a fallback before the default.
+ */
+export function resolveAgentDir(): string {
+  return process.env.PI_AGENT_DIR || process.env.PI_CODING_AGENT_DIR || DEFAULT_AGENT_DIR;
+}
 export const SOURCE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".ts",
   ".tsx",

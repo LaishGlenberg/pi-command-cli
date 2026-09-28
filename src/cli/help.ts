@@ -14,6 +14,7 @@ export function printHelp(): void {
   process.stdout.write(`  --no-defaults                Do not add default discovery flags\n`);
   process.stdout.write(`  --allow-discovery            Alias for --no-defaults\n`);
   process.stdout.write(`  -n, --nothing                Equivalent to "-ne -ns -nc -np"\n`);
+  process.stdout.write(`  --config [--yaml] [--force]  Create the external pi-cli config file\n`);
   process.stdout.write(`  --dry-run                    Print the command without running pi\n`);
   process.stdout.write(`  -h, --help                   Show this help\n\n`);
   process.stdout.write(`Extension and skill search roots:\n`);

@@ -11,6 +11,7 @@ A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary 
 - `-bt` / `--built-in-tools` to keep only chosen built-in tools while leaving extension tools enabled
 - `-n` flag to kill ALL external context sources and tools
 - `-S` and `--import` options for saving and loading pi-cli startup options
+- `--config` to create an external JSONC/YAML config file that replaces `settings.json`
 - `-cu` / `--custom` to expand user-defined `piCli.custom` fixtures into arguments
 
 ```bash
@@ -141,7 +142,9 @@ Windows too (`C:\Program Files\...\pi.cmd`).
 `piCli.custom` holds arbitrary JSON values — strings, arrays, or nested objects
 — that you can reference from the command line or from saved configs. `-cu` /
 `--custom` takes a small argument list in which any token may be an access path
-into `piCli.custom`; each such token is replaced by the referenced value.
+into `piCli.custom`; each such token is replaced by the referenced value. It is
+read from settings.json (or the top-level `custom` key of the external config
+file):
 
 ```json
 {
@@ -193,8 +196,7 @@ every other flag and with saved configs:
 
 ## Save named configurations
 
-Save named configurations in `~/.pi/agent/settings.json` (the same file Pi
-uses for its own settings, under a `piCli` key):
+Save named configurations and load them back:
 
 ```bash
 pi-cli --save searcher -e pi-intercom -s playwright-cli
@@ -204,25 +206,68 @@ pi-cli --import searcher
 # -i searcher is an alias for --import searcher
 ```
 
-Configurations are stored as plain command strings under `piCli.agents` in
-settings.json, so you can edit them by hand. The `piCli.custom` key is reserved
-for custom fixtures. Legacy configs stored directly under `piCli` are still
-read, but new saves always go to `piCli.agents`.
+When imported, the stored command is re-parsed from scratch, so extension and
+skill names are resolved again. Import searches exact names first, then unique
+partial matches (case-insensitive).
+
+### Where configs are stored
+
+pi-cli can keep saved configs in either of two places. The external config file
+takes precedence whenever it exists:
+
+1. **External config file** — `$PI_AGENT_DIR/extensions/pi-command-cli-config/`
+   (defaults to `~/.pi/agent`); the first of `config.jsonc`, `config.json`,
+   `config.yaml`, `config.yml` that exists is used. Supports JSONC comments and
+   trailing commas, plus YAML.
+2. **settings.json** — the `piCli` key of Pi's own settings file, used when no
+   external config file exists.
+
+Create the external file with:
+
+```bash
+pi-cli --config          # create config.jsonc
+pi-cli --config --yaml   # create config.yaml instead
+pi-cli --config --force  # overwrite an existing config file
+```
+
+Once the file exists, pi-cli reads *and* writes it, and never touches
+`settings.json`. Delete the file to fall back to settings.json. External
+configs look like this:
+
+```jsonc
+{
+  // Saved command strings, written by `pi-cli --save <name> ...`.
+  "agents": {
+    "searcher": "pi-cli -e pi-intercom -s playwright-cli",
+    "quick": "pi-cli --model google/gemini"
+  },
+  // Reserved for `--custom` fixtures.
+  "custom": {}
+}
+```
+
+```yaml
+agents:
+  searcher: pi-cli -e pi-intercom -s playwright-cli
+custom: {}
+```
+
+The same content in settings.json (read only when no external file exists):
 
 ```json
 {
   "piCli": {
     "agents": {
-      "searcher": "pi-cli -e pi-intercom -s playwright-cli",
-      "quick": "pi-cli --model google/gemini"
+      "searcher": "pi-cli -e pi-intercom -s playwright-cli"
     }
   }
 }
 ```
 
-When imported, the stored command is re-parsed from scratch, so extension and
-skill names are resolved again. Import searches exact names first, then unique
-partial matches (case-insensitive).
+A nested `piCli` block inside the external file is also accepted, so the
+settings.json block can be pasted in as-is. Configs stored as flat entries
+directly under `piCli` (or at the top level of the external file) are still
+read, but new saves always go to `agents`.
 
 ## Project structure
 
@@ -235,6 +280,7 @@ src/
     main.ts         main() orchestration and child process spawning
     arguments.ts    CLI argument parsing, Pi argument building
     options.ts      Option table and matching
+    config-cmd.ts   --config init mode
     custom.ts       --custom expansion into arguments
     help.ts         pi-cli --help output
     pi-help-msg.ts  pi --helpi output
@@ -245,8 +291,10 @@ src/
     extensions.ts   Extension name resolution
     skills.ts       Skill name resolution
   config/
+    file.ts         External config file (JSONC/YAML) discovery and parsing
+    io.ts           Atomic, permissioned file writes
     settings.ts     Low-level settings.json read/write
-    config.ts       Saved pi-cli configurations + piCli.custom fixtures
+    config.ts       Config store precedence + saved configs + custom fixtures
 dist/               Compiled JavaScript published to npm (generated, gitignored)
 ```
 

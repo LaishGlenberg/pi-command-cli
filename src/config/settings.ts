@@ -1,21 +1,15 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
-import { DEFAULT_AGENT_DIR, SETTINGS_FILENAME } from "../constants.ts";
+import { resolveAgentDir, SETTINGS_FILENAME } from "../constants.ts";
+import { atomicWriteFile } from "./io.ts";
 
 export interface Settings {
   [key: string]: unknown;
 }
 
-export function settingsPath(): string {
-  return join(process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR, SETTINGS_FILENAME);
+export function settingsPath(agentDir: string = resolveAgentDir()): string {
+  return join(agentDir, SETTINGS_FILENAME);
 }
 
 export function readSettings(settingsFilePath?: string): Settings {
@@ -38,9 +32,5 @@ export function readSettings(settingsFilePath?: string): Settings {
 
 export function writeSettings(settings: Settings, settingsFilePath?: string): void {
   const path = settingsFilePath || settingsPath();
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
-  renameSync(temporary, path);
-  chmodSync(path, 0o600);
+  atomicWriteFile(path, `${JSON.stringify(settings, null, 2)}\n`);
 }

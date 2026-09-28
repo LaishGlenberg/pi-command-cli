@@ -46,5 +46,8 @@
     "@types/node": "^24.13.6",
     "oxlint": "^1.85.0",
     "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
   }
 }
