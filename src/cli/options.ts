@@ -3,6 +3,7 @@ import { BUILTIN_TOOLS, isBuiltinTool, type BuiltinTool } from "../constants.ts"
 export type OptionKey =
   | "help"
   | "helpi"
+  | "config"
   | "nothing"
   | "dryRun"
   | "noDefaults"
@@ -11,7 +12,8 @@ export type OptionKey =
   | "extension"
   | "skill"
   | "save"
-  | "import";
+  | "import"
+  | "path";
 
 export interface MatchedOption {
   key: OptionKey;
@@ -33,6 +35,7 @@ interface ValueOption {
 const FLAG_OPTIONS: readonly { key: OptionKey; flags: readonly string[] }[] = [
   { key: "help", flags: ["-h", "--help"] },
   { key: "helpi", flags: ["-hp", "--helpi"] },
+  { key: "config", flags: ["--config"] },
   { key: "nothing", flags: ["-n", "--nothing"] },
   { key: "dryRun", flags: ["--dry-run"] },
   { key: "noDefaults", flags: ["--no-defaults", "--allow-discovery"] },
@@ -49,6 +52,7 @@ const VALUE_OPTIONS: readonly ValueOption[] = [
   { key: "skill", flags: ["-s", "--skill"], requires: "a skill name or path" },
   { key: "save", flags: ["-S", "--save"], requires: "a config name" },
   { key: "import", flags: ["-i", "--import"], requires: "a config name" },
+  { key: "path", flags: ["-p", "--path"], requires: "a config directory" },
 ];
 
 /**

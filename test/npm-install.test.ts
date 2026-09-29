@@ -64,9 +64,14 @@ test(
       packedPaths.includes("dist/src/cli/arguments.js"),
       "dist/src/cli/arguments.js is missing from the tarball",
     );
+    assert.ok(
+      packedPaths.includes("dist/src/config/file.js"),
+      "dist/src/config/file.js is missing from the tarball",
+    );
 
-    // 2. Install into a throwaway global prefix. No registry access is needed
-    //    because the package has zero dependencies.
+    // 2. Install into a throwaway global prefix. The package's only runtime
+    //    dependency (`yaml`) is fetched from the registry, so this needs
+    //    network access when it is not already in the npm cache.
     const install = run(npmCommand, [
       "install",
       "--global",

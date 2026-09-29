@@ -11,7 +11,8 @@ A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary 
 - `-bt` / `--built-in-tools` to keep only chosen built-in tools while leaving extension tools enabled
 - `-n` flag to kill ALL external context sources and tools
 - `-S` and `--import` options for saving and loading pi-cli startup options
-- `-cu` / `--custom` to expand user-defined `piCli.custom` fixtures into arguments
+- `-p` / `--path` to switch to a separate saved-config directory
+- `-cu` / `--custom` to expand user-defined config fixtures into arguments
 
 ```bash
 pi-cli -e pi-intercom
@@ -116,7 +117,7 @@ Unlike `-t` / `--tools` (which Pi applies as a strict allowlist across built-in,
 extension, and custom tools, thereby disabling extension tools), `-bt` only
 filters built-ins. Note that Pi enables only `read`, `bash`, `edit`, and `write`
 by default; `grep`, `find`, and `ls` must be enabled first via the `defaultTools`
-setting in `settings.json`, otherwise `-bt` cannot keep them active:
+setting, otherwise `-bt` cannot keep them active:
 
 ```json
 { "defaultTools": ["read", "bash", "edit", "write", "grep", "find", "ls"] }
@@ -138,21 +139,20 @@ Windows too (`C:\Program Files\...\pi.cmd`).
 
 ## Custom fixtures (`--custom`)
 
-`piCli.custom` holds arbitrary JSON values — strings, arrays, or nested objects
+The config file's `custom` key holds arbitrary JSON values — strings, arrays, or nested objects
 — that you can reference from the command line or from saved configs. `-cu` /
 `--custom` takes a small argument list in which any token may be an access path
-into `piCli.custom`; each such token is replaced by the referenced value.
+into `custom`; each such token is replaced by the referenced value. It is
+read from the active pi-cli config file:
 
 ```json
 {
-  "piCli": {
-    "custom": {
-      "sys_prompts": [
-        "You are a reviewer agent. Delegate edits to a worker via pi-intercom."
-      ],
-      "ext_list": ["pi-intercom", "rtk", "todo"],
-      "cheap_model": ["--model", "google/gemini"]
-    }
+  "custom": {
+    "sys_prompts": [
+      "You are a reviewer agent. Delegate edits to a worker via pi-intercom."
+    ],
+    "ext_list": ["pi-intercom", "rtk", "todo"],
+    "cheap_model": ["--model", "google/gemini"]
   }
 }
 ```
@@ -183,18 +183,15 @@ every other flag and with saved configs:
 
 ```json
 {
-  "piCli": {
-    "agents": {
-      "reviewer": "pi-cli -ns -e pi-intercom -bt grep,ls,bash --custom '--system-prompt sys_prompts[0]'"
-    }
+  "agents": {
+    "reviewer": "pi-cli -ns -e pi-intercom -bt grep,ls,bash --custom '--system-prompt sys_prompts[0]'"
   }
 }
 ```
 
 ## Save named configurations
 
-Save named configurations in `~/.pi/agent/settings.json` (the same file Pi
-uses for its own settings, under a `piCli` key):
+Save named configurations and load them back:
 
 ```bash
 pi-cli --save searcher -e pi-intercom -s playwright-cli
@@ -204,25 +201,41 @@ pi-cli --import searcher
 # -i searcher is an alias for --import searcher
 ```
 
-Configurations are stored as plain command strings under `piCli.agents` in
-settings.json, so you can edit them by hand. The `piCli.custom` key is reserved
-for custom fixtures. Legacy configs stored directly under `piCli` are still
-read, but new saves always go to `piCli.agents`.
-
-```json
-{
-  "piCli": {
-    "agents": {
-      "searcher": "pi-cli -e pi-intercom -s playwright-cli",
-      "quick": "pi-cli --model google/gemini"
-    }
-  }
-}
-```
-
 When imported, the stored command is re-parsed from scratch, so extension and
 skill names are resolved again. Import searches exact names first, then unique
 partial matches (case-insensitive).
+
+### Where configs are stored
+
+pi-cli uses one JSON file by default: `~/.config/pi-cli/config.json`. Set
+`PI_CLI_CONFIG_DIR` to change that default location (useful for tests or a
+throwaway config). It never reads or writes Pi's `settings.json`, and it does
+not store configuration under Pi's extension directory. The file contains saved
+command strings and optional custom fixtures:
+
+```json
+{
+  "agents": {
+    "searcher": "pi-cli -e pi-intercom -s playwright-cli"
+  },
+  "custom": {}
+}
+```
+
+To use a separate config directory, pass `-p` / `--path`. The choice is saved
+in the default file as a `path` entry, which remains the source of truth:
+
+```bash
+pi-cli --path ~/work/pi-config --save work -e pi-intercom
+pi-cli --path ~/work/pi-config --import work
+# Future commands use ~/work/pi-config automatically.
+```
+
+After saving, pi-cli prints the destination and the `--path` command needed to
+switch directories. Use `--config` only when you want to create the default
+file ahead of time. Loading a config that does not exist (or a `path` that
+points at a missing file) fails with `config file not found: <path>` instead of
+silently creating anything.
 
 ## Project structure
 
@@ -230,11 +243,12 @@ partial matches (case-insensitive).
 index.ts            Bin entry point (delegates to src/, re-exports the public API)
 src/
   index.ts          Barrel re-export of the public API
-  constants.ts      Shared constants (agent dir, settings filename, extensions)
+  constants.ts      Shared constants (agent and config directories)
   cli/
     main.ts         main() orchestration and child process spawning
     arguments.ts    CLI argument parsing, Pi argument building
     options.ts      Option table and matching
+    config-cmd.ts   --config init mode
     custom.ts       --custom expansion into arguments
     help.ts         pi-cli --help output
     pi-help-msg.ts  pi --helpi output
@@ -245,8 +259,9 @@ src/
     extensions.ts   Extension name resolution
     skills.ts       Skill name resolution
   config/
-    settings.ts     Low-level settings.json read/write
-    config.ts       Saved pi-cli configurations + piCli.custom fixtures
+    file.ts         Default JSON config path and parsing
+    io.ts           Atomic, permissioned file writes
+    config.ts       Config path selection + saved configs + custom fixtures
 dist/               Compiled JavaScript published to npm (generated, gitignored)
 ```
 
