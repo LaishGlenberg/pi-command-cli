@@ -12,7 +12,8 @@ export type OptionKey =
   | "extension"
   | "skill"
   | "save"
-  | "import";
+  | "import"
+  | "path";
 
 export interface MatchedOption {
   key: OptionKey;
@@ -51,6 +52,7 @@ const VALUE_OPTIONS: readonly ValueOption[] = [
   { key: "skill", flags: ["-s", "--skill"], requires: "a skill name or path" },
   { key: "save", flags: ["-S", "--save"], requires: "a config name" },
   { key: "import", flags: ["-i", "--import"], requires: "a config name" },
+  { key: "path", flags: ["-p", "--path"], requires: "a config directory" },
 ];
 
 /**

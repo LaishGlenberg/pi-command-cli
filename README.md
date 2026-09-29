@@ -11,8 +11,8 @@ A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary 
 - `-bt` / `--built-in-tools` to keep only chosen built-in tools while leaving extension tools enabled
 - `-n` flag to kill ALL external context sources and tools
 - `-S` and `--import` options for saving and loading pi-cli startup options
-- `--config` to create an external JSONC/YAML config file that replaces `settings.json`
-- `-cu` / `--custom` to expand user-defined `piCli.custom` fixtures into arguments
+- `-p` / `--path` to switch to a separate saved-config directory
+- `-cu` / `--custom` to expand user-defined config fixtures into arguments
 
 ```bash
 pi-cli -e pi-intercom
@@ -117,7 +117,7 @@ Unlike `-t` / `--tools` (which Pi applies as a strict allowlist across built-in,
 extension, and custom tools, thereby disabling extension tools), `-bt` only
 filters built-ins. Note that Pi enables only `read`, `bash`, `edit`, and `write`
 by default; `grep`, `find`, and `ls` must be enabled first via the `defaultTools`
-setting in `settings.json`, otherwise `-bt` cannot keep them active:
+setting, otherwise `-bt` cannot keep them active:
 
 ```json
 { "defaultTools": ["read", "bash", "edit", "write", "grep", "find", "ls"] }
@@ -139,23 +139,20 @@ Windows too (`C:\Program Files\...\pi.cmd`).
 
 ## Custom fixtures (`--custom`)
 
-`piCli.custom` holds arbitrary JSON values — strings, arrays, or nested objects
+The config file's `custom` key holds arbitrary JSON values — strings, arrays, or nested objects
 — that you can reference from the command line or from saved configs. `-cu` /
 `--custom` takes a small argument list in which any token may be an access path
-into `piCli.custom`; each such token is replaced by the referenced value. It is
-read from settings.json (or the top-level `custom` key of the external config
-file):
+into `custom`; each such token is replaced by the referenced value. It is
+read from the active pi-cli config file:
 
 ```json
 {
-  "piCli": {
-    "custom": {
-      "sys_prompts": [
-        "You are a reviewer agent. Delegate edits to a worker via pi-intercom."
-      ],
-      "ext_list": ["pi-intercom", "rtk", "todo"],
-      "cheap_model": ["--model", "google/gemini"]
-    }
+  "custom": {
+    "sys_prompts": [
+      "You are a reviewer agent. Delegate edits to a worker via pi-intercom."
+    ],
+    "ext_list": ["pi-intercom", "rtk", "todo"],
+    "cheap_model": ["--model", "google/gemini"]
   }
 }
 ```
@@ -186,10 +183,8 @@ every other flag and with saved configs:
 
 ```json
 {
-  "piCli": {
-    "agents": {
-      "reviewer": "pi-cli -ns -e pi-intercom -bt grep,ls,bash --custom '--system-prompt sys_prompts[0]'"
-    }
+  "agents": {
+    "reviewer": "pi-cli -ns -e pi-intercom -bt grep,ls,bash --custom '--system-prompt sys_prompts[0]'"
   }
 }
 ```
@@ -212,62 +207,35 @@ partial matches (case-insensitive).
 
 ### Where configs are stored
 
-pi-cli can keep saved configs in either of two places. The external config file
-takes precedence whenever it exists:
+pi-cli uses one JSON file by default: `~/.config/pi-cli/config.json`. Set
+`PI_CLI_CONFIG_DIR` to change that default location (useful for tests or a
+throwaway config). It never reads or writes Pi's `settings.json`, and it does
+not store configuration under Pi's extension directory. The file contains saved
+command strings and optional custom fixtures:
 
-1. **External config file** — `$PI_AGENT_DIR/extensions/pi-command-cli-config/`
-   (defaults to `~/.pi/agent`); the first of `config.jsonc`, `config.json`,
-   `config.yaml`, `config.yml` that exists is used. Supports JSONC comments and
-   trailing commas, plus YAML.
-2. **settings.json** — the `piCli` key of Pi's own settings file, used when no
-   external config file exists.
-
-Create the external file with:
-
-```bash
-pi-cli --config          # create config.jsonc
-pi-cli --config --yaml   # create config.yaml instead
-pi-cli --config --force  # overwrite an existing config file
-```
-
-Once the file exists, pi-cli reads *and* writes it, and never touches
-`settings.json`. Delete the file to fall back to settings.json. External
-configs look like this:
-
-```jsonc
+```json
 {
-  // Saved command strings, written by `pi-cli --save <name> ...`.
   "agents": {
-    "searcher": "pi-cli -e pi-intercom -s playwright-cli",
-    "quick": "pi-cli --model google/gemini"
+    "searcher": "pi-cli -e pi-intercom -s playwright-cli"
   },
-  // Reserved for `--custom` fixtures.
   "custom": {}
 }
 ```
 
-```yaml
-agents:
-  searcher: pi-cli -e pi-intercom -s playwright-cli
-custom: {}
+To use a separate config directory, pass `-p` / `--path`. The choice is saved
+in the default file as a `path` entry, which remains the source of truth:
+
+```bash
+pi-cli --path ~/work/pi-config --save work -e pi-intercom
+pi-cli --path ~/work/pi-config --import work
+# Future commands use ~/work/pi-config automatically.
 ```
 
-The same content in settings.json (read only when no external file exists):
-
-```json
-{
-  "piCli": {
-    "agents": {
-      "searcher": "pi-cli -e pi-intercom -s playwright-cli"
-    }
-  }
-}
-```
-
-A nested `piCli` block inside the external file is also accepted, so the
-settings.json block can be pasted in as-is. Configs stored as flat entries
-directly under `piCli` (or at the top level of the external file) are still
-read, but new saves always go to `agents`.
+After saving, pi-cli prints the destination and the `--path` command needed to
+switch directories. Use `--config` only when you want to create the default
+file ahead of time. Loading a config that does not exist (or a `path` that
+points at a missing file) fails with `config file not found: <path>` instead of
+silently creating anything.
 
 ## Project structure
 
@@ -275,7 +243,7 @@ read, but new saves always go to `agents`.
 index.ts            Bin entry point (delegates to src/, re-exports the public API)
 src/
   index.ts          Barrel re-export of the public API
-  constants.ts      Shared constants (agent dir, settings filename, extensions)
+  constants.ts      Shared constants (agent and config directories)
   cli/
     main.ts         main() orchestration and child process spawning
     arguments.ts    CLI argument parsing, Pi argument building
@@ -291,10 +259,9 @@ src/
     extensions.ts   Extension name resolution
     skills.ts       Skill name resolution
   config/
-    file.ts         External config file (JSONC/YAML) discovery and parsing
+    file.ts         Default JSON config path and parsing
     io.ts           Atomic, permissioned file writes
-    settings.ts     Low-level settings.json read/write
-    config.ts       Config store precedence + saved configs + custom fixtures
+    config.ts       Config path selection + saved configs + custom fixtures
 dist/               Compiled JavaScript published to npm (generated, gitignored)
 ```
 

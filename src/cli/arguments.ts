@@ -18,11 +18,27 @@ export interface ParsedArguments {
   importName?: string | undefined;
   dryRun: boolean;
   configMode: boolean;
+  configPath?: string | undefined;
   help?: boolean | undefined;
   helpi?: boolean | undefined;
 }
 
 export type CustomSource = CustomFixtures | (() => CustomFixtures);
+
+export function stripPathFlag(argv: string[]): string[] {
+  const kept: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === undefined) continue;
+    const option = matchOption(argument);
+    if (option?.key !== "path") {
+      kept.push(argument);
+      continue;
+    }
+    if (option.inline === undefined) index += 1;
+  }
+  return kept;
+}
 
 export function stripSaveFlag(argv: string[]): string[] {
   const kept: string[] = [];
@@ -55,6 +71,7 @@ export function mergeParsedArguments(
     nothing: saved.nothing || current.nothing,
     dryRun: saved.dryRun || current.dryRun,
     configMode: saved.configMode || current.configMode,
+    configPath: current.configPath,
   };
 }
 
@@ -132,10 +149,11 @@ export function parseArguments(
   let importName: string | undefined;
   let dryRun = false;
   let configMode = false;
+  let configPath: string | undefined;
   let customExpansions = 0;
 
   // Fixtures may be passed directly or as a lazy loader, so a plain `--help`
-  // run never has to read settings.json.
+  // run never has to read the config file.
   let fixtures: CustomFixtures | undefined;
   const getFixtures = (): CustomFixtures => {
     if (fixtures === undefined) {
@@ -155,6 +173,7 @@ export function parseArguments(
     importName,
     dryRun,
     configMode,
+    configPath,
     ...extra,
   });
 
@@ -208,6 +227,11 @@ export function parseArguments(
 
     if (key === "config") {
       configMode = true;
+      continue;
+    }
+
+    if (key === "path") {
+      configPath = takeValue();
       continue;
     }
 

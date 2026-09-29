@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 /**
  * Write a file atomically with `0600` permissions: create the parent directory
  * (owner-only), write a temp file beside the target, then rename it into
- * place. Used for both `settings.json` and the external pi-cli config file so
+ * place. Used for pi-cli's JSON config files.
  * a crash can never leave a half-written file behind.
  */
 export function atomicWriteFile(path: string, content: string): void {

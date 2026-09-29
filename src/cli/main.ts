@@ -4,10 +4,16 @@ import {
   buildPiArguments,
   mergeParsedArguments,
   parseArguments,
+  stripPathFlag,
   stripSaveFlag,
   type ParsedArguments,
 } from "./arguments.ts";
-import { loadConfig, loadCustomFixtures, saveConfig } from "../config/config.ts";
+import {
+  loadConfig,
+  loadCustomFixtures,
+  saveConfig,
+  setConfigPath,
+} from "../config/config.ts";
 import { runConfigCommand } from "./config-cmd.ts";
 import { printHelp } from "./help.ts";
 import { printHelpi } from "./pi-help-msg.ts";
@@ -61,10 +67,23 @@ export function buildSpawnSpec(
   };
 }
 
+function requestedConfigPath(argv: readonly string[]): string | undefined {
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === undefined) continue;
+    if (argument === "--") break;
+    if (argument === "-p" || argument === "--path") return argv[index + 1];
+    if (argument.startsWith("--path=")) return argument.slice("--path=".length);
+    if (argument.startsWith("-p") && argument.length > 2) return argument.slice(2).replace(/^=/, "");
+  }
+  return undefined;
+}
+
 export function main(argv: string[] = process.argv.slice(2)): number | undefined {
   let parsed: ParsedArguments;
   try {
-    parsed = parseArguments(argv, () => loadCustomFixtures());
+    const requestedPath = requestedConfigPath(argv);
+    parsed = parseArguments(argv, () => loadCustomFixtures(requestedPath));
     if (parsed.help) {
       printHelp();
       return 0;
@@ -76,7 +95,8 @@ export function main(argv: string[] = process.argv.slice(2)): number | undefined
     }
 
     if (parsed.configMode) {
-      return runConfigCommand(parsed.piArguments);
+      if (parsed.configPath) setConfigPath(parsed.configPath);
+      return runConfigCommand(parsed.configPath, parsed.piArguments);
     }
 
     if (parsed.saveName && parsed.importName) {
@@ -87,16 +107,21 @@ export function main(argv: string[] = process.argv.slice(2)): number | undefined
       // Validate resource names now so a typo in an extension/skill name
       // fails before we write anything.
       buildPiArguments(parsed);
-      const tokens = stripSaveFlag(argv);
+      if (parsed.configPath) setConfigPath(parsed.configPath);
+      const tokens = stripPathFlag(stripSaveFlag(argv));
       const command = ["pi-cli", ...tokens.map(shellQuote)].join(" ");
-      const destination = saveConfig(parsed.saveName, command);
+      const destination = saveConfig(parsed.saveName, command, parsed.configPath);
       process.stdout.write(`saved config "${parsed.saveName}" to ${destination}\n`);
+      process.stdout.write(`run pi-cli --path ${shellQuote(parsed.configPath || destination.replace(/[/\\][^/\\]+$/, ""))} to switch config directories\n`);
       return 0;
     }
 
     if (parsed.importName) {
-      const saved = loadConfig(parsed.importName);
+      const saved = loadConfig(parsed.importName, parsed.configPath);
+      if (parsed.configPath) setConfigPath(parsed.configPath);
       parsed = mergeParsedArguments(saved, parsed);
+    } else if (parsed.configPath) {
+      setConfigPath(parsed.configPath);
     }
 
     const piArguments = buildPiArguments(parsed);

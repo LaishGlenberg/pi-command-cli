@@ -1,5 +1,5 @@
 /**
- * Expansion of `--custom` expressions against the user's `piCli.custom`
+ * Expansion of `--custom` expressions against the active config's `custom`
  * fixtures. A token may be a JavaScript-style access path such as
  * `sys_prompts[0]` or `config.options.deep`; anything that is not a valid
  * access path is treated as a literal argument.
@@ -80,7 +80,7 @@ function customValueToArguments(value: unknown): string[] {
 }
 
 /**
- * Expand a `--custom` expression against the user's `piCli.custom` fixtures.
+ * Expand a `--custom` expression against the active config's `custom` fixtures.
  * The expression is a small argument list in which any token may be an access
  * path such as `sys_prompts[0]`; each such token is replaced by the referenced
  * value. Strings pass through, arrays spread into separate arguments, and

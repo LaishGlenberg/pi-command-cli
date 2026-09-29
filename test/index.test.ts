@@ -7,24 +7,24 @@ import test from "node:test";
 
 import {
   buildPiArguments,
-  configDirectory,
-  findConfigPath,
-  initConfigFile,
+  defaultConfigPath,
   loadConfig,
   loadCustomFixtures,
   main,
   parseArguments,
-  parseConfigContent,
-  resolveConfigStore,
   resolveCustomExpression,
   resolveExtension,
   resolveSkill,
   saveConfig,
-  serializeConfigContent,
   shellSplit,
   type ParsedArguments,
 } from "../index.ts";
 import { buildSpawnSpec, windowsQuote } from "../src/cli/main.ts";
+
+// `--path` persists the active config directory into the default config file,
+// so point the whole suite at a throwaway directory and never touch a real
+// `~/.config/pi-cli/config.json`.
+process.env.PI_CLI_CONFIG_DIR = await mkdtemp(join(tmpdir(), "pi-cli-config-"));
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -643,380 +643,45 @@ test("buildPiArguments does not add defaults when useDefaults is false", () => {
 });
 
 // ---------------------------------------------------------------------------
-// saveConfig / loadConfig (using settings.json)
+// config paths
 // ---------------------------------------------------------------------------
 
-test("saveConfig writes command strings to settings.json under piCli.agents", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-
-  saveConfig("a1", "pi-cli -e pi-intercom,rtk -s playwright-cli", settingsFile);
-  const settings = JSON.parse(await readFile(settingsFile, "utf8"));
-  assert.equal(settings.piCli.agents["a1"], "pi-cli -e pi-intercom,rtk -s playwright-cli");
+test("saveConfig writes the active JSON config", async () => {
+  const directory = await fixture();
+  const configFile = join(directory, "config.json");
+  saveConfig("reviewer", "pi-cli -e pi-intercom", directory);
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.agents.reviewer, "pi-cli -e pi-intercom");
+  assert.equal(existsSync(join(directory, "settings.json")), false);
 });
 
-test("saveConfig creates settings.json if it does not exist", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-
-  saveConfig("x", "pi-cli --model google/gemini", settingsFile);
-  const settings = JSON.parse(await readFile(settingsFile, "utf8"));
-  assert.equal(settings.piCli.agents["x"], "pi-cli --model google/gemini");
+test("loadConfig reads a saved command and custom fixtures", async () => {
+  const directory = await fixture();
+  await writeFile(join(directory, "config.json"), JSON.stringify({
+    custom: { sys: ["hi"] },
+    agents: { reviewer: "pi-cli --custom '--system-prompt sys[0]'" },
+  }));
+  const loaded = loadConfig("reviewer", directory);
+  assert.deepEqual(loaded.piArguments, ["--system-prompt", "hi"]);
+  assert.deepEqual(loadCustomFixtures(directory), { sys: ["hi"] });
 });
 
-test("saveConfig preserves existing settings keys", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(settingsFile, JSON.stringify({ theme: "dark", enabledModels: ["a/b"] }));
-
-  saveConfig("x", "pi-cli -e pi-intercom", settingsFile);
-  const settings = JSON.parse(await readFile(settingsFile, "utf8"));
-  assert.equal(settings.theme, "dark");
-  assert.deepEqual(settings.enabledModels, ["a/b"]);
-  assert.equal(settings.piCli.agents["x"], "pi-cli -e pi-intercom");
+test("switching config directories records the path in the default config", async () => {
+  const directory = await fixture();
+  const parsed = parseArguments(["--path", directory, "--import", "reviewer"]);
+  assert.equal(parsed.configPath, directory);
+  assert.equal(parsed.importName, "reviewer");
 });
 
-test("saveConfig rejects invalid config names", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  for (const bad of [".", "..", "a/b", "a\\b", "a\0b"]) {
-    assert.throws(() => saveConfig(bad, "pi-cli", settingsFile), {
-      message: "config name must be non-empty and cannot contain path separators",
-    });
-  }
+test("defaultConfigPath honors PI_CLI_CONFIG_DIR", () => {
+  assert.equal(defaultConfigPath(), join(process.env.PI_CLI_CONFIG_DIR ?? "", "config.json"));
 });
 
-test("loadConfig finds an exact match and re-parses the command", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  saveConfig("a1", "pi-cli -e pi-intercom -s playwright-cli", settingsFile);
-
-  const loaded = loadConfig("a1", settingsFile);
-  assert.deepEqual(loaded.piArguments, ["--extension", "pi-intercom", "--skill", "playwright-cli"]);
-  assert.equal(loaded.hasExtension, true);
-  assert.equal(loaded.hasSkill, true);
-});
-
-test("loadConfig finds a unique partial match (case-insensitive)", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  saveConfig("searcher", "pi-cli -e pi-intercom", settingsFile);
-
-  const loaded = loadConfig("search", settingsFile);
-  assert.deepEqual(loaded.piArguments, ["--extension", "pi-intercom"]);
-});
-
-test("loadConfig throws when no config matches", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  saveConfig("a1", "pi-cli -e pi-intercom", settingsFile);
-
-  assert.throws(() => loadConfig("nonexistent", settingsFile), {
-    message: /saved config not found: nonexistent/,
-  });
-});
-
-test("loadConfig throws when the search is ambiguous", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  saveConfig("alpha-ext", "pi-cli -e pi-intercom", settingsFile);
-  saveConfig("alpha-skill", "pi-cli -s playwright-cli", settingsFile);
-
-  assert.throws(() => loadConfig("alpha", settingsFile), {
-    message: /saved config search is ambiguous: alpha/,
-  });
-});
-
-test("loadConfig returns exact match even when partial would also match", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  saveConfig("beta", "pi-cli -e pi-intercom", settingsFile);
-  saveConfig("beta-extended", "pi-cli -s playwright-cli", settingsFile);
-
-  const loaded = loadConfig("beta", settingsFile);
-  assert.deepEqual(loaded.piArguments, ["--extension", "pi-intercom"]);
-});
-
-test("loadConfig throws on a non-string command value", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(settingsFile, JSON.stringify({ piCli: { broken: 42 } }));
-
-  assert.throws(() => loadConfig("broken", settingsFile), {
-    message: /invalid saved config: broken/,
-  });
-});
-
-test("loadConfig throws on a malformed settings file", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(settingsFile, "not json{{{");
-
-  assert.throws(() => loadConfig("anything", settingsFile), {
-    message: /could not read settings file/,
-  });
-});
-
-test("loadConfig throws when settings.json has no piCli key", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(settingsFile, JSON.stringify({ theme: "dark" }));
-
-  assert.throws(() => loadConfig("anything", settingsFile), {
-    message: /no saved configs found/,
-  });
-});
-
-// ---------------------------------------------------------------------------
-// external config file (JSONC / YAML)
-// ---------------------------------------------------------------------------
-
-async function writeExternalConfig(agentDir: string, filename: string, content: string) {
-  const directory = configDirectory(agentDir);
-  await mkdir(directory, { recursive: true });
-  await writeFile(join(directory, filename), content);
-  return join(directory, filename);
-}
-
-test("parseConfigContent accepts JSONC comments and trailing commas", () => {
-  const parsed = parseConfigContent(
-    `{
-      // a comment
-      "agents": { "a": "pi-cli -e foo", },
-      /* block comment */
-      "custom": { "sys": ["hi"] },
-    }`,
-    "config.jsonc",
-  );
-  assert.deepEqual(parsed, { agents: { a: "pi-cli -e foo" }, custom: { sys: ["hi"] } });
-});
-
-test("parseConfigContent parses YAML with nested agents and custom", () => {
-  const parsed = parseConfigContent(
-    [
-      "# comment",
-      "agents:",
-      "  searcher: pi-cli -e pi-intercom",
-      "custom:",
-      "  sys:",
-      "    - hello world",
-      "",
-    ].join("\n"),
-    "config.yaml",
-  );
-  assert.deepEqual(parsed, {
-    agents: { searcher: "pi-cli -e pi-intercom" },
-    custom: { sys: ["hello world"] },
-  });
-});
-
-test("parseConfigContent rejects a non-mapping top level", () => {
-  assert.throws(() => parseConfigContent("- a\n- b\n", "config.yaml"), {
-    message: /config file must contain a mapping/,
-  });
-});
-
-test("serializeConfigContent round-trips JSONC and YAML", () => {
-  const value = { agents: { a: "pi-cli -e foo" }, custom: { sys: ["hi"] } };
-  assert.deepEqual(
-    parseConfigContent(serializeConfigContent(value, "config.jsonc"), "config.jsonc"),
-    value,
-  );
-  assert.deepEqual(
-    parseConfigContent(serializeConfigContent(value, "config.yaml"), "config.yaml"),
-    value,
-  );
-});
-
-test("findConfigPath probes filenames in precedence order", async () => {
-  const agentDir = await fixture();
-  const directory = join(agentDir, "probe");
-  await mkdir(directory, { recursive: true });
-  assert.equal(findConfigPath(directory), undefined);
-  await writeFile(join(directory, "config.yaml"), "agents: {}\n");
-  assert.equal(findConfigPath(directory), join(directory, "config.yaml"));
-  await writeFile(join(directory, "config.jsonc"), "{}\n");
-  assert.equal(findConfigPath(directory), join(directory, "config.jsonc"));
-});
-
-test("initConfigFile creates the directory and a starter file", async () => {
-  const agentDir = await fixture();
-  const directory = configDirectory(agentDir);
-  const result = initConfigFile({ directory });
-  assert.equal(result.created, true);
-  assert.equal(result.path, join(directory, "config.jsonc"));
-  assert.ok(existsSync(result.path));
-  assert.deepEqual(parseConfigContent(await readFile(result.path, "utf8"), result.path), {
-    agents: {},
-    custom: {},
-  });
-});
-
-test("initConfigFile does not overwrite without force", async () => {
-  const agentDir = await fixture();
-  const directory = configDirectory(agentDir);
-  initConfigFile({ directory });
-  await writeFile(join(directory, "config.jsonc"), '{ "agents": { "keep": "pi-cli" } }\n');
-
-  const second = initConfigFile({ directory });
-  assert.equal(second.created, false);
-  assert.deepEqual(parseConfigContent(await readFile(second.path, "utf8"), second.path), {
-    agents: { keep: "pi-cli" },
-  });
-
-  const forced = initConfigFile({ directory, force: true });
-  assert.equal(forced.created, true);
-  assert.deepEqual(parseConfigContent(await readFile(forced.path, "utf8"), forced.path), {
-    agents: {},
-    custom: {},
-  });
-});
-
-test("resolveConfigStore prefers the external file and falls back to settings", async () => {
-  const agentDir = await fixture();
-  withEnv({ PI_AGENT_DIR: agentDir }, () => {
-    assert.deepEqual(resolveConfigStore(), {
-      kind: "settings",
-      path: join(agentDir, "settings.json"),
-    });
-  });
-
-  const configPath = await writeExternalConfig(agentDir, "config.jsonc", "{}\n");
-  withEnv({ PI_AGENT_DIR: agentDir }, () => {
-    assert.deepEqual(resolveConfigStore(), { kind: "file", path: configPath });
-  });
-});
-
-test("saveConfig writes to the external file and leaves settings.json untouched", async () => {
-  const agentDir = await fixture();
-  const configPath = await writeExternalConfig(agentDir, "config.jsonc", '{\n  "agents": {}\n}\n');
-  withEnv({ PI_AGENT_DIR: agentDir }, () => {
-    assert.equal(saveConfig("ext", "pi-cli -e pi-intercom"), configPath);
-  });
-
-  assert.equal(existsSync(join(agentDir, "settings.json")), false);
-  assert.deepEqual(parseConfigContent(await readFile(configPath, "utf8"), configPath), {
-    agents: { ext: "pi-cli -e pi-intercom" },
-  });
-});
-
-test("saveConfig preserves unrelated keys in the external file", async () => {
-  const agentDir = await fixture();
-  const configPath = await writeExternalConfig(
-    agentDir,
-    "config.jsonc",
-    JSON.stringify({ theme: "external", agents: {}, custom: { sys: ["hi"] } }),
-  );
-  withEnv({ PI_AGENT_DIR: agentDir }, () => saveConfig("a", "pi-cli -e foo"));
-
-  const parsed = parseConfigContent(await readFile(configPath, "utf8"), configPath);
-  assert.equal(parsed.theme, "external");
-  assert.deepEqual(parsed.custom, { sys: ["hi"] });
-  assert.deepEqual(parsed.agents, { a: "pi-cli -e foo" });
-});
-
-test("saveConfig writes YAML when the config file is YAML", async () => {
-  const agentDir = await fixture();
-  const configPath = await writeExternalConfig(agentDir, "config.yaml", "agents: {}\n");
-  withEnv({ PI_AGENT_DIR: agentDir }, () => saveConfig("y", "pi-cli -e pi-intercom"));
-
-  assert.deepEqual(parseConfigContent(await readFile(configPath, "utf8"), configPath), {
-    agents: { y: "pi-cli -e pi-intercom" },
-  });
-});
-
-test("loadConfig and loadCustomFixtures read the external file", async () => {
-  const agentDir = await fixture();
-  await writeExternalConfig(
-    agentDir,
-    "config.jsonc",
-    JSON.stringify({
-      agents: { reviewer: "pi-cli --custom '--system-prompt sys[0]'" },
-      custom: { sys: ["hi"] },
-    }),
-  );
-
-  withEnv({ PI_AGENT_DIR: agentDir }, () => {
-    assert.deepEqual(loadConfig("reviewer").piArguments, ["--system-prompt", "hi"]);
-    assert.deepEqual(loadCustomFixtures(), { sys: ["hi"] });
-  });
-});
-
-test("external config takes precedence over settings.json for reads and writes", async () => {
-  const agentDir = await fixture();
-  await writeFile(
-    join(agentDir, "settings.json"),
-    JSON.stringify({ piCli: { agents: { shared: "pi-cli -e settings-only" } } }),
-  );
-  const configPath = await writeExternalConfig(
-    agentDir,
-    "config.jsonc",
-    JSON.stringify({ agents: { shared: "pi-cli -e file-wins" } }),
-  );
-
-  withEnv({ PI_AGENT_DIR: agentDir }, () => {
-    assert.deepEqual(loadConfig("shared").piArguments, ["--extension", "file-wins"]);
-    saveConfig("added", "pi-cli -e added");
-  });
-
-  const settings = JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"));
-  assert.deepEqual(settings.piCli.agents, { shared: "pi-cli -e settings-only" });
-  assert.deepEqual(
-    parseConfigContent(await readFile(configPath, "utf8"), configPath).agents,
-    { shared: "pi-cli -e file-wins", added: "pi-cli -e added" },
-  );
-});
-
-test("external config accepts a nested piCli block", async () => {
-  const agentDir = await fixture();
-  await writeExternalConfig(
-    agentDir,
-    "config.jsonc",
-    JSON.stringify({ piCli: { agents: { nested: "pi-cli -e pi-intercom" } } }),
-  );
-  withEnv({ PI_AGENT_DIR: agentDir }, () => {
-    assert.deepEqual(loadConfig("nested").piArguments, ["--extension", "pi-intercom"]);
-  });
-});
-
-test("main --config creates the external config file", async () => {
-  const agentDir = await fixture();
-  assert.equal(withEnv({ PI_AGENT_DIR: agentDir }, () => main(["--config"])), 0);
-  assert.ok(existsSync(join(configDirectory(agentDir), "config.jsonc")));
-});
-
-test("main --config --yaml creates a YAML config", async () => {
-  const agentDir = await fixture();
-  assert.equal(withEnv({ PI_AGENT_DIR: agentDir }, () => main(["--config", "--yaml"])), 0);
-  assert.ok(existsSync(join(configDirectory(agentDir), "config.yaml")));
-});
-
-test("main round-trips save/import through the external config without touching settings", async () => {
-  const agentDir = await fixture();
-  withEnv({ PI_AGENT_DIR: agentDir }, () => assert.equal(main(["--config"]), 0));
-  withEnv({ PI_AGENT_DIR: agentDir }, () =>
-    assert.equal(main(["-e", "pi-intercom", "--save", "ext"]), 0),
-  );
-  assert.equal(existsSync(join(agentDir, "settings.json")), false);
-
-  const originalWrite = process.stdout.write;
-  let output = "";
-  process.stdout.write = (chunk) => {
-    output += chunk;
-    return true;
-  };
-  let result;
-  try {
-    result = withEnv({ PI_AGENT_DIR: agentDir }, () => main(["--import", "ext", "--dry-run"]));
-  } finally {
-    process.stdout.write = originalWrite;
-  }
-
-  assert.equal(result, 0);
-  assert.equal(
-    output,
-    `pi -ne --extension ${join(agentDir, "npm", "node_modules", "pi-intercom")}\n`,
-  );
+test("loadConfig reports a missing config file clearly", async () => {
+  const directory = await fixture();
+  const missing = join(directory, "no-config-here");
+  assert.throws(() => loadConfig("reviewer", missing), {
+    message: /config file not found: .*no-config-here/, });
 });
 
 // ---------------------------------------------------------------------------
@@ -1143,78 +808,33 @@ test("parseArguments expands --custom and buildPiArguments resolves the result",
   ]);
 });
 
-test("saveConfig nests commands under piCli.agents and preserves custom", async () => {
+test("saved custom fixtures round-trip through an explicit config path", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(
-    settingsFile,
-    JSON.stringify({ theme: "dark", piCli: { custom: { sys: ["hi"] } } }),
-  );
-
-  saveConfig("reviewer", "pi-cli -e pi-intercom", settingsFile);
-  const settings = JSON.parse(await readFile(settingsFile, "utf8"));
-  assert.equal(settings.theme, "dark");
-  assert.deepEqual(settings.piCli.custom, { sys: ["hi"] });
-  assert.equal(settings.piCli.agents.reviewer, "pi-cli -e pi-intercom");
-});
-
-test("loadConfig reads nested agents and expands quoted custom expressions", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(
-    settingsFile,
-    JSON.stringify({
-      piCli: {
-        custom: { sys: ["hi"] },
-        agents: { reviewer: "pi-cli --custom '--system-prompt sys[0]'" },
-      },
-    }),
-  );
-
-  const loaded = loadConfig("reviewer", settingsFile);
+  const configDir = join(agentDir, "configs");
+  await mkdir(configDir, { recursive: true });
+  await writeFile(join(configDir, "config.json"), JSON.stringify({ custom: { sys: ["hi"] } }));
+  saveConfig("reviewer", "pi-cli --custom '--system-prompt sys[0]'", configDir);
+  const loaded = loadConfig("reviewer", configDir);
   assert.deepEqual(loaded.piArguments, ["--system-prompt", "hi"]);
 });
 
-test("loadConfig still reads legacy flat piCli configs", async () => {
+test("main expands custom fixtures from an explicit config path on --dry-run", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(settingsFile, JSON.stringify({ piCli: { legacy: "pi-cli -e pi-intercom" } }));
-
-  const loaded = loadConfig("legacy", settingsFile);
-  assert.deepEqual(loaded.piArguments, ["--extension", "pi-intercom"]);
-});
-
-test("loadCustomFixtures reads piCli.custom", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(settingsFile, JSON.stringify({ piCli: { custom: { sys: ["hi"] } } }));
-
-  assert.deepEqual(loadCustomFixtures(settingsFile), { sys: ["hi"] });
-  assert.deepEqual(loadCustomFixtures(join(agentDir, "missing.json")), {});
-});
-
-test("main expands --custom fixtures from settings.json on --dry-run", async () => {
-  const agentDir = await fixture();
-  await writeFile(
-    join(agentDir, "settings.json"),
-    JSON.stringify({ piCli: { custom: { sys: ["hello world"] } } }),
-  );
+  const configDir = join(agentDir, "configs");
+  await mkdir(configDir, { recursive: true });
+  await writeFile(join(configDir, "config.json"), JSON.stringify({ custom: { sys: ["hello world"] } }));
 
   const originalWrite = process.stdout.write;
   let output = "";
-  process.stdout.write = (chunk) => {
-    output += chunk;
-    return true;
-  };
+  process.stdout.write = (chunk) => { output += chunk; return true; };
   let result;
   try {
     result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-      main(["--custom", "--system-prompt sys[0]", "--dry-run"]),
+      main(["--path", configDir, "--custom", "--system-prompt sys[0]", "--dry-run"]),
     );
   } finally {
     process.stdout.write = originalWrite;
   }
-
   assert.equal(result, 0);
   assert.equal(output, "pi --system-prompt 'hello world'\n");
 });
@@ -1242,25 +862,25 @@ test("main returns 1 when --save and --import are used together", async () => {
 test("main saves config and returns 0 when --save is used", async () => {
   const agentDir = await fixture();
   const result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["-e", "pi-intercom", "--save", "myconfig"]),
+    main(["--path", agentDir, "-e", "pi-intercom", "--save", "myconfig"]),
   );
   assert.equal(result, 0);
   const settings = JSON.parse(
-    await readFile(join(agentDir, "settings.json"), "utf8"),
+    await readFile(join(agentDir, "config.json"), "utf8"),
   );
-  assert.equal(settings.piCli.agents["myconfig"], "pi-cli -e pi-intercom");
+  assert.equal(settings.agents["myconfig"], "pi-cli -e pi-intercom");
 });
 
 test("main saves config with -S shorthand", async () => {
   const agentDir = await fixture();
   const result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["-s", "playwright-cli", "-S", "my-skill-config"]),
+    main(["--path", agentDir, "-s", "playwright-cli", "-S", "my-skill-config"]),
   );
   assert.equal(result, 0);
   const settings = JSON.parse(
-    await readFile(join(agentDir, "settings.json"), "utf8"),
+    await readFile(join(agentDir, "config.json"), "utf8"),
   );
-  assert.equal(settings.piCli.agents["my-skill-config"], "pi-cli -s playwright-cli");
+  assert.equal(settings.agents["my-skill-config"], "pi-cli -s playwright-cli");
 });
 
 test("main prints the command and returns 0 on --dry-run", async () => {
@@ -1274,10 +894,10 @@ test("main prints the command and returns 0 on --dry-run", async () => {
 test("main imports and merges a saved config", async () => {
   const agentDir = await fixture();
   withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["-e", "pi-intercom", "--save", "base"]),
+    main(["--path", agentDir, "-e", "pi-intercom", "--save", "base"]),
   );
   const result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["--import", "base", "--dry-run"]),
+    main(["--path", agentDir, "--import", "base", "--dry-run"]),
   );
   assert.equal(result, 0);
 });
@@ -1285,15 +905,15 @@ test("main imports and merges a saved config", async () => {
 test("main round-trips a --custom saved config through --import", async () => {
   const agentDir = await fixture();
   await writeFile(
-    join(agentDir, "settings.json"),
-    JSON.stringify({ piCli: { custom: { sys: ["hello world"] } } }),
+    join(agentDir, "config.json"),
+    JSON.stringify({ custom: { sys: ["hello world"] } }),
   );
 
   withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["--custom", "--system-prompt sys[0]", "--save", "reviewer"]),
+    main(["--path", agentDir, "--custom", "--system-prompt sys[0]", "--save", "reviewer"]),
   );
-  const settings = JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"));
-  assert.equal(settings.piCli.agents.reviewer, "pi-cli --custom '--system-prompt sys[0]'");
+  const settings = JSON.parse(await readFile(join(agentDir, "config.json"), "utf8"));
+  assert.equal(settings.agents.reviewer, "pi-cli --custom '--system-prompt sys[0]'");
 
   const originalWrite = process.stdout.write;
   let output = "";
@@ -1304,7 +924,7 @@ test("main round-trips a --custom saved config through --import", async () => {
   let result;
   try {
     result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-      main(["--import", "reviewer", "--dry-run"]),
+      main(["--path", agentDir, "--import", "reviewer", "--dry-run"]),
     );
   } finally {
     process.stdout.write = originalWrite;

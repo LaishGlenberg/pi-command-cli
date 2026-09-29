@@ -12,17 +12,16 @@ transparent pass-through for every other `pi` flag.
 ## Commands
 
 ```bash
-npm test             # run the test suite (146 tests, node:test) on the .ts sources
+npm test             # run the test suite (120 tests, node:test) on the .ts sources
 npm run typecheck    # tsc --noEmit (tsconfig.json)
 npm run build        # compile to dist/ for publishing (tsconfig.build.json)
 npm link             # expose `pi-cli` locally (the prepare script builds first)
 pi-cli --dry-run ... # print the expanded `pi ...` command without spawning
-pi-cli --config      # create the external JSONC config file
+pi-cli --config      # create ~/.config/pi-cli/config.json
 ```
 
 Written in TypeScript and compiled with `tsc` to `dist/` for publishing; the
-only runtime dependency is `yaml` (used by the external config file) and there
-is no bundler. Node >= 22.18, ESM
+there is no bundler and no runtime dependency for config storage. Node >= 22.18, ESM
 (`"type": "module"`). Tests run the `.ts` sources directly through Node's native
 type stripping and use the built-in `node:test` + `node:assert/strict` only.
 `dist/` is generated and gitignored; `bin`/`main` point at `dist/index.js`. The
@@ -37,12 +36,12 @@ Entry flow: `index.ts` (bin) → `src/cli/main.ts#main` → `src/cli/arguments.t
 index.ts            Bin entry; runs main() when invoked directly, re-exports public API
 src/
   index.ts          Barrel re-export of the public API (public surface lives here)
-  constants.ts      Agent dir, settings filename, piCli key, source extensions
+  constants.ts      Agent and config directories, source extensions
   cli/
     main.ts         main() orchestration, shell/Windows quoting, child spawn
     arguments.ts    stripSaveFlag/merge + parseArguments/buildPiArguments + shellSplit
     options.ts      Option table (FLAG_OPTIONS/VALUE_OPTIONS) + matchOption + -bt validation
-    config-cmd.ts   `--config` init mode (create external config file)
+    config-cmd.ts   `--config` default config initializer
     custom.ts       --custom access-path lookup and expansion
     help.ts         `pi-cli --help` text
     pi-help-msg.ts  `pi-cli --helpi` text (pi's own help; keep roughly in sync with pi)
@@ -53,10 +52,9 @@ src/
     extensions.ts   Extension name → path resolution
     skills.ts       Skill name → path resolution
   config/
-    file.ts         External config file discovery + JSONC/YAML parse/serialize
-    io.ts           Atomic, permissioned file writes (settings + external config)
-    settings.ts     Atomic, permissioned settings.json read/write
-    config.ts       Config store precedence + saveConfig/loadConfig (+ piCli.custom)
+    file.ts         Default JSON config path and parsing
+    io.ts           Atomic, permissioned file writes
+    config.ts       Config path selection + saved configs + custom fixtures
 test/index.test.ts  All tests
 dist/               `tsc` output (generated, gitignored) that npm publishes
 
@@ -104,9 +102,9 @@ Caveat to preserve: `--exclude-tools` only removes; Pi's default built-ins are
 
 ### Custom fixtures (`--custom`)
 
-`piCli.custom` holds arbitrary JSON. `-cu`/`--custom` takes one argv element
+The active config file's `custom` key holds arbitrary JSON. `-cu`/`--custom` takes one argv element
 containing an argument list in which any token may be a JavaScript-style access
-path (e.g. `sys_prompts[0]`, `opts.nested['x']`) into `piCli.custom`.
+path (e.g. `sys_prompts[0]`, `opts.nested['x']`) into `custom`.
 `parseArguments` expands it against the fixtures, **splices the result into the
 token stream, and re-parses it as if typed on the command line** — so pi-cli
 flags inside a `--custom` expression (`-e`, `-s`, `-bt`, nested `--custom`, …)
@@ -118,31 +116,24 @@ resolves nothing throws. `buildPiArguments` no longer handles `--custom`; after
 
 ### Saved config storage
 
-There are two interchangeable stores, and the external file wins whenever it
-exists:
+pi-cli uses `~/.config/pi-cli/config.json` by default. It never reads or writes
+Pi's `settings.json` and does not use the extension directory. The JSON file
+contains `agents` (saved command strings) and optional `custom` fixtures.
 
-1. **External config file** — `<agentDir>/extensions/pi-command-cli-config/`,
-   first of `config.jsonc`, `config.json`, `config.yaml`, `config.yml`. Created
-   by `pi-cli --config` (add `--yaml` for YAML, `--force` to overwrite). Supports
-   JSONC (comments + trailing commas) and YAML via the `yaml` package.
-2. **settings.json** — the `piCli` section, used only when no external file
-   exists.
+`-p`/`--path <directory>` switches to another config directory and records its
+absolute path in the default config's `path` key. The default file therefore
+remains the source of truth for the active directory. Stored command strings
+are tokenized with `shellSplit` (quote-aware) so quoted `--custom` values
+round-trip.
 
-`resolveConfigStore(agentDir?)` picks the store; `saveConfig`, `loadConfig`,
-and `loadCustomFixtures` all go through it, so when the external file is
-present they never touch settings.json. Both stores share the same shape:
-`agents` holds saved command strings and `custom` is reserved for `--custom`
-fixtures. `loadConfig` also reads legacy flat entries (and a nested `piCli`
-block in the external file). Stored command strings are tokenized with
-`shellSplit` (quote-aware) so a quoted `--custom` value round-trips.
-
-The explicit `settingsFilePath` parameter on the public config functions stays
-settings-only; internal `config.ts` uses `ConfigStore` when it is omitted.
+The default directory is resolved lazily by `defaultConfigDir()` in
+`constants.ts`, and `PI_CLI_CONFIG_DIR` overrides it. `loadConfig` throws
+`config file not found: <path>` when the active file is absent (for example a
+stale `path` entry), rather than reporting an empty store.
 
 ## Conventions
 
-- Plain ESM, named exports, no classes, minimal external deps (only `yaml`,
-  for the external config file). Prefer small pure
+- Plain ESM, named exports, no classes, and minimal external dependencies. Prefer small pure
   functions so they can be unit-tested directly.
 - TypeScript is compiled but the `.ts` sources are also run directly by Node, so
   keep syntax erasable (`tsconfig.json` sets `erasableSyntaxOnly`): no `enum`,
@@ -163,10 +154,8 @@ settings-only; internal `config.ts` uses `ConfigStore` when it is omitted.
   but a globally linked `pi-cli` runs the file through its shebang and needs
   `+x`. A bare `tsc` run that skips this step will make the linked bin fail
   with "Permission denied".
-- `settings.json` is shared with pi. Only touch the `piCli` key (`piCli.agents`
-  for saved commands; never clobber `piCli.custom`), write atomically (temp +
-  rename) with `0600`, and preserve unrelated keys. When the external config
-  file exists, do not read or write settings.json at all.
+- pi-cli owns only its JSON config files under `~/.config/pi-cli` (or the
+  selected `--path` directory). Write atomically (temp + rename) with `0600`.
 
 ## Releasing
 
@@ -225,9 +214,12 @@ committed artifact.
 
 - Add tests to `test/index.test.ts`. Use the `fixture()` helper to build a fake
   agent dir (npm/git/extensions/skills trees) and `withEnv` to set
-  `PI_AGENT_DIR` / `PI_BIN`. To exercise the external config store, write a file
-  under `configDirectory(agentDir)` and call `saveConfig`/`loadConfig` with no
-  explicit path while `PI_AGENT_DIR` points at the fixture.
+  `PI_AGENT_DIR` / `PI_BIN`. The suite sets `PI_CLI_CONFIG_DIR` to a throwaway
+  directory at the top of `test/index.test.ts`, so `--path` (which persists the
+  active directory into the default config) can never clobber a real
+  `~/.config/pi-cli/config.json`. To exercise config paths, use a temporary
+  directory as the explicit `saveConfig`/`loadConfig` path or pass it with
+  `--path`.
 - Prefer asserting on `parseArguments` output and `buildPiArguments` output
   rather than spawning pi. `parseArguments(argv, custom)` takes fixture data (or
   a loader) for `--custom` tests. `main()` tests capture
@@ -238,7 +230,7 @@ committed artifact.
   prefix, and runs the installed `pi-cli` bin. It is the check that the compiled
   artifact actually ships. Keep it in sync when `files`, `bin`, `main`, or the
   entry point change. It skips when npm is missing; installing the tarball
-  fetches the single `yaml` dependency from the registry unless it is already in
+  fetches the package dependencies from the registry unless they are already in
   the npm cache.
 - Run `node --test` and `npm run typecheck` before finishing; the suite is fast
   and must stay green.

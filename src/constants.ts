@@ -2,8 +2,23 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
-export const SETTINGS_FILENAME = "settings.json";
-export const PI_CLI_KEY = "piCli";
+export const CONFIG_FILENAME = "config.json";
+export const CONFIG_PATH_KEY = "path";
+
+/**
+ * Fallback per-user config directory, frozen at import time. Runtime code
+ * should call `defaultConfigDir()` instead so the location can be overridden.
+ */
+export const DEFAULT_CONFIG_DIR = join(homedir(), ".config", "pi-cli");
+
+/**
+ * Resolve the default pi-cli config directory. `PI_CLI_CONFIG_DIR` overrides
+ * the per-user location so tests (and users) can keep a real
+ * `~/.config/pi-cli` file out of the way.
+ */
+export function defaultConfigDir(): string {
+  return process.env.PI_CLI_CONFIG_DIR || DEFAULT_CONFIG_DIR;
+}
 
 /**
  * Resolve the pi agent directory. `PI_AGENT_DIR` is pi-cli's historical
@@ -23,7 +38,7 @@ export const SOURCE_EXTENSIONS: ReadonlySet<string> = new Set([
 
 // Built-in tools Pi can enable. `-bt`/`--built-in-tools` keeps only the named
 // ones active by turning the rest into `--exclude-tools`. grep/find/ls are off
-// by default in Pi, so they must be enabled via settings.json `defaultTools`
+// by default in Pi, so they must be enabled via Pi's own `defaultTools` setting
 // before `-bt` can keep them.
 export const BUILTIN_TOOLS = [
   "read",

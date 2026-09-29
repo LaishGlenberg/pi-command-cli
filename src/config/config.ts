@@ -1,9 +1,18 @@
 import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
-import { PI_CLI_KEY, resolveAgentDir } from "../constants.ts";
 import { parseArguments, shellSplit, type ParsedArguments } from "../cli/arguments.ts";
-import { configDirectory, findConfigPath, readConfigFile, writeConfigFile } from "./file.ts";
-import { readSettings, settingsPath, writeSettings, type Settings } from "./settings.ts";
+import {
+  CONFIG_FILENAME,
+  CONFIG_PATH_KEY,
+  defaultConfigDir,
+} from "../constants.ts";
+import {
+  configPath as filePath,
+  readConfigFile,
+  resolveConfigReference,
+  writeConfigFile,
+} from "./file.ts";
 
 export interface PiCliSection {
   agents?: Record<string, unknown>;
@@ -11,12 +20,13 @@ export interface PiCliSection {
   [key: string]: unknown;
 }
 
-export type ConfigStoreKind = "file" | "settings";
+export type ConfigStoreKind = "file";
 
-/** Where pi-cli reads and writes saved configs. */
+/** The config file and directory currently used by pi-cli. */
 export interface ConfigStore {
   kind: ConfigStoreKind;
   path: string;
+  directory: string;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -29,23 +39,49 @@ export function validateConfigName(name: string): void {
   }
 }
 
-function storeLabel(kind: ConfigStoreKind): string {
-  return kind === "file" ? "config file" : "settings file";
+function asStore(pathOrDirectory: string): ConfigStore {
+  const isFile = pathOrDirectory.replaceAll("\\\\", "/").endsWith(`/${CONFIG_FILENAME}`);
+  const path = isFile ? pathOrDirectory : filePath(pathOrDirectory);
+  return { kind: "file", path, directory: isFile ? dirname(path) : pathOrDirectory };
 }
 
-/**
- * Prefer pi-cli's own config file when it exists; otherwise fall back to the
- * `piCli` section in `settings.json`. The presence of the file is what opts the
- * user into the external store, so settings.json stays untouched in that case.
- */
-export function resolveConfigStore(agentDir: string = resolveAgentDir()): ConfigStore {
-  const file = findConfigPath(configDirectory(agentDir));
-  if (file) return { kind: "file", path: file };
-  return { kind: "settings", path: settingsPath(agentDir) };
+function defaultStore(): ConfigStore {
+  return asStore(defaultConfigDir());
 }
 
-export function externalConfigPath(agentDir: string = resolveAgentDir()): string | undefined {
-  return findConfigPath(configDirectory(agentDir));
+/** Read the default config's path pointer, if one has been configured. */
+function configuredDirectory(): string | undefined {
+  const root = defaultStore();
+  if (!existsSync(root.path)) return undefined;
+  const document = readConfigFile(root.path);
+  const reference = document[CONFIG_PATH_KEY];
+  if (typeof reference !== "string" || reference.trim() === "") return undefined;
+  return resolveConfigReference(reference, root.path);
+}
+
+/** Resolve the active config. The default config remains the source of truth for the path. */
+export function resolveConfigStore(directory?: string): ConfigStore {
+  if (directory) return asStore(directory);
+  return asStore(configuredDirectory() || defaultConfigDir());
+}
+
+export function defaultConfigPath(): string {
+  return defaultStore().path;
+}
+
+export function externalConfigPath(directory?: string): string | undefined {
+  const store = resolveConfigStore(directory);
+  return existsSync(store.path) ? store.path : undefined;
+}
+
+/** Persist the active config directory in ~/.config/pi-cli/config.json. */
+export function setConfigPath(directory: string): string {
+  if (!directory.trim()) throw new Error("config path must not be empty");
+  const root = defaultStore();
+  const document = existsSync(root.path) ? readConfigFile(root.path) : {};
+  document[CONFIG_PATH_KEY] = resolve(directory);
+  writeConfigFile(root.path, document);
+  return root.path;
 }
 
 function ensureObject(target: Record<string, unknown>, key: string): Record<string, unknown> {
@@ -56,102 +92,70 @@ function ensureObject(target: Record<string, unknown>, key: string): Record<stri
   return created;
 }
 
-interface OpenStore {
+function openStore(store: ConfigStore): {
   section: PiCliSection;
   write: () => void;
+} {
+  const document = existsSync(store.path) ? readConfigFile(store.path) : {};
+  const section = document as PiCliSection;
+  return {
+    section,
+    write: () => {
+      writeConfigFile(store.path, document);
+    },
+  };
 }
 
-/**
- * Open a store for reading and writing. Returns the `piCli`-shaped section plus
- * a `write` callback bound to the right backend, so callers never have to care
- * whether they are editing settings.json or the external file.
- */
-function openStore(store: ConfigStore): OpenStore {
-  if (store.kind === "settings") {
-    const document: Record<string, unknown> = existsSync(store.path)
-      ? (readSettings(store.path) as Settings)
-      : {};
-    const section = ensureObject(document, PI_CLI_KEY) as PiCliSection;
-    return { section, write: () => writeSettings(document, store.path) };
-  }
-
-  const document = readConfigFile(store.path);
-  const nested = document[PI_CLI_KEY];
-  // A dedicated file normally holds `agents`/`custom` at the top level, but
-  // accepting a nested `piCli` lets users paste the settings.json block as-is.
-  const section = isObject(nested) ? (nested as PiCliSection) : (document as PiCliSection);
-  return { section, write: () => writeConfigFile(store.path, document) };
-}
-
-/**
- * Collect saved commands, preferring the nested `agents` layout and falling
- * back to legacy flat entries so older configs keep working. The reserved
- * `agents` and `custom` keys are skipped.
- */
 function savedAgents(section: PiCliSection): Record<string, unknown> {
   const agents: Record<string, unknown> = {};
-  if (isObject(section.agents)) {
-    Object.assign(agents, section.agents);
-  }
+  if (isObject(section.agents)) Object.assign(agents, section.agents);
   for (const [key, value] of Object.entries(section)) {
-    if (key === "agents" || key === "custom") continue;
+    if (key === "agents" || key === "custom" || key === CONFIG_PATH_KEY) continue;
     if (!Object.hasOwn(agents, key)) agents[key] = value;
   }
   return agents;
 }
 
-/**
- * Read the user-defined `custom` fixtures used by `--custom`. Returns an empty
- * object when the value is missing or not an object.
- */
 function customFixtures(section: PiCliSection): Record<string, unknown> {
   return isObject(section.custom) ? section.custom : {};
 }
 
-function storeFor(settingsFilePath?: string): ConfigStore {
-  return settingsFilePath
-    ? { kind: "settings", path: settingsFilePath }
-    : resolveConfigStore();
+function storeFor(configPath?: string): ConfigStore {
+  return resolveConfigStore(configPath);
 }
 
-export function saveConfig(name: string, command: string, settingsFilePath?: string): string {
+export function saveConfig(name: string, command: string, configPath?: string): string {
   validateConfigName(name);
-  const store = storeFor(settingsFilePath);
+  const store = storeFor(configPath);
   const { section, write } = openStore(store);
-
-  const agents = ensureObject(section, "agents");
-  agents[name] = command;
-
+  ensureObject(section, "agents")[name] = command;
   write();
   return store.path;
 }
 
-export function loadCustomFixtures(settingsFilePath?: string): Record<string, unknown> {
-  const store = storeFor(settingsFilePath);
-  if (store.kind === "settings" && !existsSync(store.path)) return {};
-  const { section } = openStore(store);
-  return customFixtures(section);
+export function loadCustomFixtures(configPath?: string): Record<string, unknown> {
+  const store = storeFor(configPath);
+  if (!existsSync(store.path)) return {};
+  return customFixtures(openStore(store).section);
 }
 
-export function loadConfig(search: string, settingsFilePath?: string): ParsedArguments {
+export function loadConfig(search: string, configPath?: string): ParsedArguments {
   validateConfigName(search);
-  const store = storeFor(settingsFilePath);
-  const { section } = openStore(store);
-
+  const store = storeFor(configPath);
+  if (!existsSync(store.path)) {
+    throw new Error(`config file not found: ${store.path}`);
+  }
+  const section = openStore(store).section;
   const configs = savedAgents(section);
   const names = Object.keys(configs);
-  if (names.length === 0) {
-    throw new Error(`no saved configs found\n${storeLabel(store.kind)}: ${store.path}`);
-  }
+  if (names.length === 0) throw new Error(`no saved configs found\nconfig file: ${store.path}`);
+
   const exact = names.find((name) => name === search);
   const candidates = exact
     ? [exact]
     : names.filter((name) => name.toLowerCase().includes(search.toLowerCase()));
-
   if (candidates.length === 0) {
-    throw new Error(
-      `saved config not found: ${search}\n${storeLabel(store.kind)}: ${store.path}`,
-    );
+    throw new Error(`saved config not found: ${search}\nconfig file: ${store.path}`);
   }
   if (candidates.length > 1) {
     throw new Error(
@@ -161,17 +165,10 @@ export function loadConfig(search: string, settingsFilePath?: string): ParsedArg
   }
 
   const candidate = candidates[0];
-  if (candidate === undefined) {
-    throw new Error(`saved config not found: ${search}\n${storeLabel(store.kind)}: ${store.path}`);
+  if (candidate === undefined || typeof configs[candidate] !== "string") {
+    throw new Error(`invalid saved config: ${candidate ?? search}`);
   }
-
-  const command = configs[candidate];
-  if (typeof command !== "string") {
-    throw new Error(`invalid saved config: ${candidate}`);
-  }
-
-  // Re-parse the stored command string as fresh argv (skip the leading "pi-cli").
-  const tokens = shellSplit(command);
+  const tokens = shellSplit(configs[candidate]);
   if (tokens[0] === "pi-cli") tokens.shift();
   const saved = parseArguments(tokens, customFixtures(section));
   saved.importName = candidate;
