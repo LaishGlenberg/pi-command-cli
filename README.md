@@ -156,6 +156,7 @@ by the referenced value.
       "You are a reviewer agent. Delegate edits to a worker via pi-intercom."
     ],
     "ext_list": ["pi-intercom", "rtk", "todo"],
+    "extension_lists": ["pi-parse-commands,pi-intercom", "pi-herdr,pi-mcp-adapter"],
     "cheap_model": ["--model", "google/gemini"]
   }
 }
@@ -175,6 +176,14 @@ separate arguments, and objects/numbers/booleans are JSON-serialized. Multiple
 references are allowed in one expression. Tokens that do not resolve are passed
 through literally, and an expression that resolves nothing throws
 `custom fixture not found`.
+
+Several references can be concatenated with commas inside one token, which is
+handy for flags that take a comma-separated list such as `-e`. Each part is
+resolved and the values are joined back together with commas (arrays flatten
+the same way), so `--custom '-e extension_lists[0],extension_lists[1]'` becomes
+one `-e pi-parse-commands,pi-intercom,pi-herdr,pi-mcp-adapter`. If only some of
+a token's comma-joined parts resolve, pi-cli throws `custom fixture not found`
+for the first missing one.
 
 Expansion happens in the parser, not as plain text substitution: once the
 fixture values are spliced in, the result is parsed exactly as if you had typed

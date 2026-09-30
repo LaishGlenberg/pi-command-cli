@@ -991,6 +991,54 @@ test("resolveCustomExpression substitutes multiple references", () => {
   );
 });
 
+test("--custom concatenates comma-joined fixture references", () => {
+  const custom = {
+    ext_lists: ["pi-parse-commands,pi-intercom", "pi-herdr,pi-mcp-adapter"],
+  };
+  const parsed = parseArguments(["--custom", "-e ext_lists[0],ext_lists[1]"], custom);
+  assert.deepEqual(parsed.piArguments, [
+    "--extension",
+    "pi-parse-commands",
+    "--extension",
+    "pi-intercom",
+    "--extension",
+    "pi-herdr",
+    "--extension",
+    "pi-mcp-adapter",
+  ]);
+  assert.equal(parsed.hasExtension, true);
+});
+
+test("resolveCustomExpression flattens array fixtures when concatenating", () => {
+  const custom = { ext_lists: [["a", "b"], ["c"]] };
+  assert.deepEqual(resolveCustomExpression("-e ext_lists[0],ext_lists[1]", custom), [
+    "-e",
+    "a,b,c",
+  ]);
+});
+
+test("resolveCustomExpression throws when a concatenated reference is missing", () => {
+  const custom = { ext_lists: ["a,b"] };
+  assert.throws(() => resolveCustomExpression("-e ext_lists[0],nope", custom), {
+    message: "custom fixture not found: nope",
+  });
+});
+
+test("resolveCustomExpression leaves literal comma tokens untouched", () => {
+  const custom = { ext: "pi-intercom" };
+  assert.deepEqual(resolveCustomExpression("-e ext --exclude-tools grep,ls", custom), [
+    "-e",
+    "pi-intercom",
+    "--exclude-tools",
+    "grep,ls",
+  ]);
+});
+
+test("resolveCustomExpression keeps a comma inside a bracketed key", () => {
+  const custom = { opts: { "a,b": "value" } };
+  assert.deepEqual(resolveCustomExpression("opts['a,b']", custom), ["value"]);
+});
+
 test("resolveCustomExpression throws when the fixture is missing", () => {
   assert.throws(() => resolveCustomExpression("--system-prompt nope[0]", {}), {
     message: /custom fixture not found: --system-prompt nope\[0\]/,
