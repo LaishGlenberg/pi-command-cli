@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
   buildPiArguments,
+  configDir,
+  configPath,
   loadConfig,
   loadCustomFixtures,
   main,
@@ -635,44 +637,52 @@ test("buildPiArguments does not add defaults when useDefaults is false", () => {
 });
 
 // ---------------------------------------------------------------------------
-// saveConfig / loadConfig (using settings.json)
+// saveConfig / loadConfig (using ~/.config/pi-cli/config.json)
 // ---------------------------------------------------------------------------
 
-test("saveConfig writes command strings to settings.json under piCli.agents", async () => {
+test("saveConfig writes command strings to config.json under agents", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
+  const configFile = join(agentDir, "config.json");
 
-  saveConfig("a1", "pi-cli -e pi-intercom,rtk -s playwright-cli", settingsFile);
-  const settings = JSON.parse(await readFile(settingsFile, "utf8"));
-  assert.equal(settings.piCli.agents["a1"], "pi-cli -e pi-intercom,rtk -s playwright-cli");
+  saveConfig("a1", "pi-cli -e pi-intercom,rtk -s playwright-cli", configFile);
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.agents["a1"], "pi-cli -e pi-intercom,rtk -s playwright-cli");
 });
 
-test("saveConfig creates settings.json if it does not exist", async () => {
+test("saveConfig creates config.json if it does not exist", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
+  const configFile = join(agentDir, "config.json");
 
-  saveConfig("x", "pi-cli --model google/gemini", settingsFile);
-  const settings = JSON.parse(await readFile(settingsFile, "utf8"));
-  assert.equal(settings.piCli.agents["x"], "pi-cli --model google/gemini");
+  saveConfig("x", "pi-cli --model google/gemini", configFile);
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.agents["x"], "pi-cli --model google/gemini");
 });
 
-test("saveConfig preserves existing settings keys", async () => {
+test("saveConfig preserves unrelated config keys and custom fixtures", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(settingsFile, JSON.stringify({ theme: "dark", enabledModels: ["a/b"] }));
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: { sys: ["hi"] }, future: true }));
 
-  saveConfig("x", "pi-cli -e pi-intercom", settingsFile);
-  const settings = JSON.parse(await readFile(settingsFile, "utf8"));
-  assert.equal(settings.theme, "dark");
-  assert.deepEqual(settings.enabledModels, ["a/b"]);
-  assert.equal(settings.piCli.agents["x"], "pi-cli -e pi-intercom");
+  saveConfig("x", "pi-cli -e pi-intercom", configFile);
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.deepEqual(config.custom, { sys: ["hi"] });
+  assert.equal(config.future, true);
+  assert.equal(config.agents["x"], "pi-cli -e pi-intercom");
+});
+
+test("saveConfig writes the config file with owner-only permissions", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+
+  saveConfig("x", "pi-cli -e pi-intercom", configFile);
+  assert.equal((await stat(configFile)).mode & 0o777, 0o600);
 });
 
 test("saveConfig rejects invalid config names", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
+  const configFile = join(agentDir, "config.json");
   for (const bad of [".", "..", "a/b", "a\\b", "a\0b"]) {
-    assert.throws(() => saveConfig(bad, "pi-cli", settingsFile), {
+    assert.throws(() => saveConfig(bad, "pi-cli", configFile), {
       message: "config name must be non-empty and cannot contain path separators",
     });
   }
@@ -680,10 +690,10 @@ test("saveConfig rejects invalid config names", async () => {
 
 test("loadConfig finds an exact match and re-parses the command", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  saveConfig("a1", "pi-cli -e pi-intercom -s playwright-cli", settingsFile);
+  const configFile = join(agentDir, "config.json");
+  saveConfig("a1", "pi-cli -e pi-intercom -s playwright-cli", configFile);
 
-  const loaded = loadConfig("a1", settingsFile);
+  const loaded = loadConfig("a1", configFile);
   assert.deepEqual(loaded.piArguments, ["--extension", "pi-intercom", "--skill", "playwright-cli"]);
   assert.equal(loaded.hasExtension, true);
   assert.equal(loaded.hasSkill, true);
@@ -691,76 +701,137 @@ test("loadConfig finds an exact match and re-parses the command", async () => {
 
 test("loadConfig finds a unique partial match (case-insensitive)", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  saveConfig("searcher", "pi-cli -e pi-intercom", settingsFile);
+  const configFile = join(agentDir, "config.json");
+  saveConfig("searcher", "pi-cli -e pi-intercom", configFile);
 
-  const loaded = loadConfig("search", settingsFile);
+  const loaded = loadConfig("search", configFile);
   assert.deepEqual(loaded.piArguments, ["--extension", "pi-intercom"]);
 });
 
 test("loadConfig throws when no config matches", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  saveConfig("a1", "pi-cli -e pi-intercom", settingsFile);
+  const configFile = join(agentDir, "config.json");
+  saveConfig("a1", "pi-cli -e pi-intercom", configFile);
 
-  assert.throws(() => loadConfig("nonexistent", settingsFile), {
+  assert.throws(() => loadConfig("nonexistent", configFile), {
     message: /saved config not found: nonexistent/,
   });
 });
 
 test("loadConfig throws when the search is ambiguous", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  saveConfig("alpha-ext", "pi-cli -e pi-intercom", settingsFile);
-  saveConfig("alpha-skill", "pi-cli -s playwright-cli", settingsFile);
+  const configFile = join(agentDir, "config.json");
+  saveConfig("alpha-ext", "pi-cli -e pi-intercom", configFile);
+  saveConfig("alpha-skill", "pi-cli -s playwright-cli", configFile);
 
-  assert.throws(() => loadConfig("alpha", settingsFile), {
+  assert.throws(() => loadConfig("alpha", configFile), {
     message: /saved config search is ambiguous: alpha/,
   });
 });
 
 test("loadConfig returns exact match even when partial would also match", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  saveConfig("beta", "pi-cli -e pi-intercom", settingsFile);
-  saveConfig("beta-extended", "pi-cli -s playwright-cli", settingsFile);
+  const configFile = join(agentDir, "config.json");
+  saveConfig("beta", "pi-cli -e pi-intercom", configFile);
+  saveConfig("beta-extended", "pi-cli -s playwright-cli", configFile);
 
-  const loaded = loadConfig("beta", settingsFile);
+  const loaded = loadConfig("beta", configFile);
   assert.deepEqual(loaded.piArguments, ["--extension", "pi-intercom"]);
 });
 
 test("loadConfig throws on a non-string command value", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(settingsFile, JSON.stringify({ piCli: { broken: 42 } }));
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ agents: { broken: 42 } }));
 
-  assert.throws(() => loadConfig("broken", settingsFile), {
+  assert.throws(() => loadConfig("broken", configFile), {
     message: /invalid saved config: broken/,
   });
 });
 
-test("loadConfig throws on a malformed settings file", async () => {
+test("loadConfig throws on a malformed config file", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(settingsFile, "not json{{{");
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, "not json{{{");
 
-  assert.throws(() => loadConfig("anything", settingsFile), {
-    message: /could not read settings file/,
+  assert.throws(() => loadConfig("anything", configFile), {
+    message: /could not read config file/,
   });
 });
 
-test("loadConfig throws when settings.json has no piCli key", async () => {
+test("loadConfig throws when config.json has no agents map", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(settingsFile, JSON.stringify({ theme: "dark" }));
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: { sys: ["hi"] } }));
 
-  assert.throws(() => loadConfig("anything", settingsFile), {
+  assert.throws(() => loadConfig("anything", configFile), {
+    message: /no saved configs found/,
+  });
+});
+
+test("loadConfig throws when the config file is missing", async () => {
+  const agentDir = await fixture();
+
+  assert.throws(() => loadConfig("anything", join(agentDir, "missing.json")), {
+    message: /no saved configs found/,
+  });
+});
+
+test("loadConfig does not treat top-level keys as legacy configs", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ legacy: "pi-cli -e pi-intercom" }));
+
+  assert.throws(() => loadConfig("legacy", configFile), {
     message: /no saved configs found/,
   });
 });
 
 // ---------------------------------------------------------------------------
-// custom fixtures (--custom / piCli.custom)
+// config path resolution and loading
+// ---------------------------------------------------------------------------
+
+test("configPath honors PI_CLI_CONFIG", () => {
+  withEnv({ PI_CLI_CONFIG: "/tmp/custom-pi-cli.json" }, () => {
+    assert.equal(configPath(), "/tmp/custom-pi-cli.json");
+  });
+});
+
+test("configPath defaults to $XDG_CONFIG_HOME/pi-cli/config.json", () => {
+  withEnv({ XDG_CONFIG_HOME: "/tmp/xdg-config" }, () => {
+    assert.equal(configPath(), join("/tmp/xdg-config", "pi-cli", "config.json"));
+  });
+});
+
+test("configDir falls back to ~/.config when XDG_CONFIG_HOME is empty", () => {
+  withEnv({ XDG_CONFIG_HOME: "" }, () => {
+    assert.equal(configDir().endsWith(join(".config", "pi-cli")), true);
+  });
+});
+
+test("loadCustomFixtures reads top-level custom fixtures", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: { sys: ["hi"] } }));
+
+  assert.deepEqual(loadCustomFixtures(configFile), { sys: ["hi"] });
+});
+
+test("loadCustomFixtures returns an empty object for a missing file", async () => {
+  const agentDir = await fixture();
+  assert.deepEqual(loadCustomFixtures(join(agentDir, "missing.json")), {});
+});
+
+test("loadCustomFixtures ignores a non-object custom value", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: ["nope"] }));
+
+  assert.deepEqual(loadCustomFixtures(configFile), {});
+});
+
+// ---------------------------------------------------------------------------
+// custom fixtures (--custom / config.json custom)
 // ---------------------------------------------------------------------------
 
 test("--custom expands inline and the wrapper is removed", () => {
@@ -883,62 +954,37 @@ test("parseArguments expands --custom and buildPiArguments resolves the result",
   ]);
 });
 
-test("saveConfig nests commands under piCli.agents and preserves custom", async () => {
+test("saveConfig nests commands under agents and preserves custom", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(
-    settingsFile,
-    JSON.stringify({ theme: "dark", piCli: { custom: { sys: ["hi"] } } }),
-  );
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: { sys: ["hi"] }, future: true }));
 
-  saveConfig("reviewer", "pi-cli -e pi-intercom", settingsFile);
-  const settings = JSON.parse(await readFile(settingsFile, "utf8"));
-  assert.equal(settings.theme, "dark");
-  assert.deepEqual(settings.piCli.custom, { sys: ["hi"] });
-  assert.equal(settings.piCli.agents.reviewer, "pi-cli -e pi-intercom");
+  saveConfig("reviewer", "pi-cli -e pi-intercom", configFile);
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.future, true);
+  assert.deepEqual(config.custom, { sys: ["hi"] });
+  assert.equal(config.agents.reviewer, "pi-cli -e pi-intercom");
 });
 
-test("loadConfig reads nested agents and expands quoted custom expressions", async () => {
+test("loadConfig reads agents and expands quoted custom expressions", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
+  const configFile = join(agentDir, "config.json");
   await writeFile(
-    settingsFile,
+    configFile,
     JSON.stringify({
-      piCli: {
-        custom: { sys: ["hi"] },
-        agents: { reviewer: "pi-cli --custom '--system-prompt sys[0]'" },
-      },
+      custom: { sys: ["hi"] },
+      agents: { reviewer: "pi-cli --custom '--system-prompt sys[0]'" },
     }),
   );
 
-  const loaded = loadConfig("reviewer", settingsFile);
+  const loaded = loadConfig("reviewer", configFile);
   assert.deepEqual(loaded.piArguments, ["--system-prompt", "hi"]);
 });
 
-test("loadConfig still reads legacy flat piCli configs", async () => {
+test("main expands --custom fixtures from config.json on --dry-run", async () => {
   const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(settingsFile, JSON.stringify({ piCli: { legacy: "pi-cli -e pi-intercom" } }));
-
-  const loaded = loadConfig("legacy", settingsFile);
-  assert.deepEqual(loaded.piArguments, ["--extension", "pi-intercom"]);
-});
-
-test("loadCustomFixtures reads piCli.custom", async () => {
-  const agentDir = await fixture();
-  const settingsFile = join(agentDir, "settings.json");
-  await writeFile(settingsFile, JSON.stringify({ piCli: { custom: { sys: ["hi"] } } }));
-
-  assert.deepEqual(loadCustomFixtures(settingsFile), { sys: ["hi"] });
-  assert.deepEqual(loadCustomFixtures(join(agentDir, "missing.json")), {});
-});
-
-test("main expands --custom fixtures from settings.json on --dry-run", async () => {
-  const agentDir = await fixture();
-  await writeFile(
-    join(agentDir, "settings.json"),
-    JSON.stringify({ piCli: { custom: { sys: ["hello world"] } } }),
-  );
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: { sys: ["hello world"] } }));
 
   const originalWrite = process.stdout.write;
   let output = "";
@@ -948,8 +994,9 @@ test("main expands --custom fixtures from settings.json on --dry-run", async () 
   };
   let result;
   try {
-    result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-      main(["--custom", "--system-prompt sys[0]", "--dry-run"]),
+    result = withEnv(
+      { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: configFile },
+      () => main(["--custom", "--system-prompt sys[0]", "--dry-run"]),
     );
   } finally {
     process.stdout.write = originalWrite;
@@ -981,26 +1028,26 @@ test("main returns 1 when --save and --import are used together", async () => {
 
 test("main saves config and returns 0 when --save is used", async () => {
   const agentDir = await fixture();
-  const result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["-e", "pi-intercom", "--save", "myconfig"]),
+  const configFile = join(agentDir, "config.json");
+  const result = withEnv(
+    { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: configFile },
+    () => main(["-e", "pi-intercom", "--save", "myconfig"]),
   );
   assert.equal(result, 0);
-  const settings = JSON.parse(
-    await readFile(join(agentDir, "settings.json"), "utf8"),
-  );
-  assert.equal(settings.piCli.agents["myconfig"], "pi-cli -e pi-intercom");
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.agents["myconfig"], "pi-cli -e pi-intercom");
 });
 
 test("main saves config with -S shorthand", async () => {
   const agentDir = await fixture();
-  const result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["-s", "playwright-cli", "-S", "my-skill-config"]),
+  const configFile = join(agentDir, "config.json");
+  const result = withEnv(
+    { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: configFile },
+    () => main(["-s", "playwright-cli", "-S", "my-skill-config"]),
   );
   assert.equal(result, 0);
-  const settings = JSON.parse(
-    await readFile(join(agentDir, "settings.json"), "utf8"),
-  );
-  assert.equal(settings.piCli.agents["my-skill-config"], "pi-cli -s playwright-cli");
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.agents["my-skill-config"], "pi-cli -s playwright-cli");
 });
 
 test("main prints the command and returns 0 on --dry-run", async () => {
@@ -1013,27 +1060,22 @@ test("main prints the command and returns 0 on --dry-run", async () => {
 
 test("main imports and merges a saved config", async () => {
   const agentDir = await fixture();
-  withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["-e", "pi-intercom", "--save", "base"]),
-  );
-  const result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["--import", "base", "--dry-run"]),
-  );
+  const configFile = join(agentDir, "config.json");
+  const env = { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: configFile };
+  withEnv(env, () => main(["-e", "pi-intercom", "--save", "base"]));
+  const result = withEnv(env, () => main(["--import", "base", "--dry-run"]));
   assert.equal(result, 0);
 });
 
 test("main round-trips a --custom saved config through --import", async () => {
   const agentDir = await fixture();
-  await writeFile(
-    join(agentDir, "settings.json"),
-    JSON.stringify({ piCli: { custom: { sys: ["hello world"] } } }),
-  );
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: { sys: ["hello world"] } }));
+  const env = { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: configFile };
 
-  withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["--custom", "--system-prompt sys[0]", "--save", "reviewer"]),
-  );
-  const settings = JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"));
-  assert.equal(settings.piCli.agents.reviewer, "pi-cli --custom '--system-prompt sys[0]'");
+  withEnv(env, () => main(["--custom", "--system-prompt sys[0]", "--save", "reviewer"]));
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.agents.reviewer, "pi-cli --custom '--system-prompt sys[0]'");
 
   const originalWrite = process.stdout.write;
   let output = "";
@@ -1043,9 +1085,7 @@ test("main round-trips a --custom saved config through --import", async () => {
   };
   let result;
   try {
-    result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-      main(["--import", "reviewer", "--dry-run"]),
-    );
+    result = withEnv(env, () => main(["--import", "reviewer", "--dry-run"]));
   } finally {
     process.stdout.write = originalWrite;
   }
@@ -1072,8 +1112,9 @@ test("main returns 1 when the skill cannot be resolved", async () => {
 
 test("main returns 1 when --import references a missing config", async () => {
   const agentDir = await fixture();
-  const result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["--import", "nonexistent"]),
+  const result = withEnv(
+    { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: join(agentDir, "config.json") },
+    () => main(["--import", "nonexistent"]),
   );
   assert.equal(result, 1);
 });

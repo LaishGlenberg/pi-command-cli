@@ -35,7 +35,7 @@ Entry flow: `index.ts` (bin) → `src/cli/main.ts#main` → `src/cli/arguments.t
 index.ts            Bin entry; runs main() when invoked directly, re-exports public API
 src/
   index.ts          Barrel re-export of the public API (public surface lives here)
-  constants.ts      Agent dir, settings filename, piCli key, source extensions
+  constants.ts      Agent dir, config filename/dir name, source extensions
   cli/
     main.ts         main() orchestration, shell/Windows quoting, child spawn
     arguments.ts    stripSaveFlag/merge + parseArguments/buildPiArguments + shellSplit
@@ -50,8 +50,8 @@ src/
     extensions.ts   Extension name → path resolution
     skills.ts       Skill name → path resolution
   config/
-    settings.ts     Atomic, permissioned settings.json read/write
-    config.ts       saveConfig/loadConfig on top of settings.ts (+ piCli.custom)
+    config-file.ts  Atomic, permissioned config.json read/write + path resolution
+    config.ts       saveConfig/loadConfig on top of config-file.ts (+ custom)
 test/index.test.ts  All tests
 dist/               `tsc` output (generated, gitignored) that npm publishes
 
@@ -94,14 +94,15 @@ It must **not** use `--tools`/`-t`: that is a strict allowlist across built-in,
 extension, and custom tools and would disable the very extension tools `-e`
 loads. `--tools`/`-t` typed by the user are still passed through unchanged.
 Caveat to preserve: `--exclude-tools` only removes; Pi's default built-ins are
-`read, bash, edit, write`, so `grep`/`find`/`ls` must be enabled via the
-`defaultTools` setting before `-bt` can keep them.
+`read, bash, edit, write`, so `grep`/`find`/`ls` must be enabled via Pi's
+`settings.json` `defaultTools` setting before `-bt` can keep them.
 
 ### Custom fixtures (`--custom`)
 
-`piCli.custom` holds arbitrary JSON. `-cu`/`--custom` takes one argv element
-containing an argument list in which any token may be a JavaScript-style access
-path (e.g. `sys_prompts[0]`, `opts.nested['x']`) into `piCli.custom`.
+The top-level `custom` key of pi-cli's own config holds arbitrary JSON.
+`-cu`/`--custom` takes one argv element containing an argument list in which any
+token may be a JavaScript-style access path (e.g. `sys_prompts[0]`,
+`opts.nested['x']`) into `custom`.
 `parseArguments` expands it against the fixtures, **splices the result into the
 token stream, and re-parses it as if typed on the command line** — so pi-cli
 flags inside a `--custom` expression (`-e`, `-s`, `-bt`, nested `--custom`, …)
@@ -113,10 +114,12 @@ resolves nothing throws. `buildPiArguments` no longer handles `--custom`; after
 
 ### Saved config storage
 
-Saved commands live under `piCli.agents.<name>`; `piCli.custom` is reserved and
-must be preserved. `loadConfig` also reads legacy flat `piCli.<name>` entries.
-Stored command strings are tokenized with `shellSplit` (quote-aware) so a quoted
-`--custom` value round-trips.
+pi-cli owns its config at `~/.config/pi-cli/config.json` (honoring
+`$XDG_CONFIG_HOME`, overridable with `$PI_CLI_CONFIG`), separate from Pi's
+`settings.json`. Saved commands live under the top-level `agents.<name>` key;
+the top-level `custom` key is reserved and must be preserved. There is no
+settings.json fallback. Stored command strings are tokenized with `shellSplit`
+(quote-aware) so a quoted `--custom` value round-trips.
 
 ## Conventions
 
@@ -141,9 +144,9 @@ Stored command strings are tokenized with `shellSplit` (quote-aware) so a quoted
   but a globally linked `pi-cli` runs the file through its shebang and needs
   `+x`. A bare `tsc` run that skips this step will make the linked bin fail
   with "Permission denied".
-- `settings.json` is shared with pi. Only touch the `piCli` key (`piCli.agents`
-  for saved commands; never clobber `piCli.custom`), write atomically (temp +
-  rename) with `0600`, and preserve unrelated keys.
+- pi-cli owns `~/.config/pi-cli/config.json` and never writes Pi's
+  `settings.json`. Preserve unrelated keys and `custom` (`agents` holds saved
+  commands), and write atomically (temp + rename) with `0600`.
 
 ## Releasing
 
@@ -202,7 +205,8 @@ committed artifact.
 
 - Add tests to `test/index.test.ts`. Use the `fixture()` helper to build a fake
   agent dir (npm/git/extensions/skills trees) and `withEnv` to set
-  `PI_AGENT_DIR` / `PI_BIN`.
+  `PI_AGENT_DIR` / `PI_BIN` / `PI_CLI_CONFIG` (point it at a temp `config.json`
+  so tests never touch the real config).
 - Prefer asserting on `parseArguments` output and `buildPiArguments` output
   rather than spawning pi. `parseArguments(argv, custom)` takes fixture data (or
   a loader) for `--custom` tests. `main()` tests capture

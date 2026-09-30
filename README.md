@@ -11,7 +11,7 @@ A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary 
 - `-bt` / `--built-in-tools` to keep only chosen built-in tools while leaving extension tools enabled
 - `-n` flag to kill ALL external context sources and tools
 - `-S` and `--import` options for saving and loading pi-cli startup options
-- `-cu` / `--custom` to expand user-defined `piCli.custom` fixtures into arguments
+- `-cu` / `--custom` to expand user-defined `custom` fixtures from pi-cli's config into arguments
 
 ```bash
 pi-cli -e pi-intercom
@@ -116,7 +116,7 @@ Unlike `-t` / `--tools` (which Pi applies as a strict allowlist across built-in,
 extension, and custom tools, thereby disabling extension tools), `-bt` only
 filters built-ins. Note that Pi enables only `read`, `bash`, `edit`, and `write`
 by default; `grep`, `find`, and `ls` must be enabled first via the `defaultTools`
-setting in `settings.json`, otherwise `-bt` cannot keep them active:
+setting in Pi's `settings.json`, otherwise `-bt` cannot keep them active:
 
 ```json
 { "defaultTools": ["read", "bash", "edit", "write", "grep", "find", "ls"] }
@@ -136,23 +136,26 @@ pi-cli -n -e pi-intercom
 Set `PI_BIN` to use a different Pi executable. Paths with spaces work on
 Windows too (`C:\Program Files\...\pi.cmd`).
 
+pi-cli stores its own config at `~/.config/pi-cli/config.json` (honoring
+`$XDG_CONFIG_HOME`). Set `PI_CLI_CONFIG` to point at a different file.
+
 ## Custom fixtures (`--custom`)
 
-`piCli.custom` holds arbitrary JSON values — strings, arrays, or nested objects
-— that you can reference from the command line or from saved configs. `-cu` /
-`--custom` takes a small argument list in which any token may be an access path
-into `piCli.custom`; each such token is replaced by the referenced value.
+pi-cli's own config lives at `~/.config/pi-cli/config.json` (independent of
+Pi's `settings.json`). Its top-level `custom` key holds arbitrary JSON values —
+strings, arrays, or nested objects — that you can reference from the command
+line or from saved configs. `-cu` / `--custom` takes a small argument list in
+which any token may be an access path into `custom`; each such token is replaced
+by the referenced value.
 
 ```json
 {
-  "piCli": {
-    "custom": {
-      "sys_prompts": [
-        "You are a reviewer agent. Delegate edits to a worker via pi-intercom."
-      ],
-      "ext_list": ["pi-intercom", "rtk", "todo"],
-      "cheap_model": ["--model", "google/gemini"]
-    }
+  "custom": {
+    "sys_prompts": [
+      "You are a reviewer agent. Delegate edits to a worker via pi-intercom."
+    ],
+    "ext_list": ["pi-intercom", "rtk", "todo"],
+    "cheap_model": ["--model", "google/gemini"]
   }
 }
 ```
@@ -183,18 +186,16 @@ every other flag and with saved configs:
 
 ```json
 {
-  "piCli": {
-    "agents": {
-      "reviewer": "pi-cli -ns -e pi-intercom -bt grep,ls,bash --custom '--system-prompt sys_prompts[0]'"
-    }
+  "agents": {
+    "reviewer": "pi-cli -ns -e pi-intercom -bt grep,ls,bash --custom '--system-prompt sys_prompts[0]'"
   }
 }
 ```
 
 ## Save named configurations
 
-Save named configurations in `~/.pi/agent/settings.json` (the same file Pi
-uses for its own settings, under a `piCli` key):
+Save named configurations in pi-cli's own config file at
+`~/.config/pi-cli/config.json` (independent of Pi's `settings.json`):
 
 ```bash
 pi-cli --save searcher -e pi-intercom -s playwright-cli
@@ -204,18 +205,15 @@ pi-cli --import searcher
 # -i searcher is an alias for --import searcher
 ```
 
-Configurations are stored as plain command strings under `piCli.agents` in
-settings.json, so you can edit them by hand. The `piCli.custom` key is reserved
-for custom fixtures. Legacy configs stored directly under `piCli` are still
-read, but new saves always go to `piCli.agents`.
+Configurations are stored as plain command strings under the top-level `agents`
+key in config.json, so you can edit them by hand. The top-level `custom` key is
+reserved for custom fixtures, and unknown keys are preserved on save.
 
 ```json
 {
-  "piCli": {
-    "agents": {
-      "searcher": "pi-cli -e pi-intercom -s playwright-cli",
-      "quick": "pi-cli --model google/gemini"
-    }
+  "agents": {
+    "searcher": "pi-cli -e pi-intercom -s playwright-cli",
+    "quick": "pi-cli --model google/gemini"
   }
 }
 ```
@@ -230,7 +228,7 @@ partial matches (case-insensitive).
 index.ts            Bin entry point (delegates to src/, re-exports the public API)
 src/
   index.ts          Barrel re-export of the public API
-  constants.ts      Shared constants (agent dir, settings filename, extensions)
+  constants.ts      Shared constants (agent dir, config filename, extensions)
   cli/
     main.ts         main() orchestration and child process spawning
     arguments.ts    CLI argument parsing, Pi argument building
@@ -245,8 +243,8 @@ src/
     extensions.ts   Extension name resolution
     skills.ts       Skill name resolution
   config/
-    settings.ts     Low-level settings.json read/write
-    config.ts       Saved pi-cli configurations + piCli.custom fixtures
+    config-file.ts  Low-level ~/.config/pi-cli/config.json read/write
+    config.ts       Saved pi-cli configurations + custom fixtures
 dist/               Compiled JavaScript published to npm (generated, gitignored)
 ```
 

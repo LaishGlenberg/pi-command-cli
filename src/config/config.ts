@@ -1,14 +1,10 @@
-import { existsSync } from "node:fs";
-
-import { PI_CLI_KEY } from "../constants.ts";
 import { parseArguments, shellSplit, type ParsedArguments } from "../cli/arguments.ts";
-import { readSettings, settingsPath, writeSettings, type Settings } from "./settings.ts";
-
-export interface PiCliSection {
-  agents?: Record<string, unknown>;
-  custom?: unknown;
-  [key: string]: unknown;
-}
+import {
+  configPath,
+  readConfigFile,
+  writeConfigFile,
+  type ConfigFile,
+} from "./config-file.ts";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -20,77 +16,52 @@ export function validateConfigName(name: string): void {
   }
 }
 
-function piCliSection(settings: Settings): PiCliSection {
-  const existing = settings[PI_CLI_KEY];
-  if (!isObject(existing)) {
-    settings[PI_CLI_KEY] = {};
-  }
-  return settings[PI_CLI_KEY] as PiCliSection;
-}
-
-export function saveConfig(name: string, command: string, settingsFilePath?: string): string {
+export function saveConfig(name: string, command: string, configFilePath?: string): string {
   validateConfigName(name);
-  const path = settingsFilePath || settingsPath();
-  const settings = existsSync(path) ? readSettings(path) : {};
-  const piCli = piCliSection(settings);
+  const path = configFilePath || configPath();
+  const config = readConfigFile(path);
+  const agents = isObject(config.agents) ? config.agents : {};
 
-  if (!isObject(piCli.agents)) {
-    piCli.agents = {};
-  }
-  piCli.agents[name] = command;
+  agents[name] = command;
+  config.agents = agents;
 
-  writeSettings(settings, path);
+  writeConfigFile(config, path);
   return path;
 }
 
 /**
- * Collect saved commands, preferring the nested `piCli.agents` layout and
- * falling back to the legacy flat `piCli.<name>` layout so older settings
- * files keep working. The reserved `agents` and `custom` keys are skipped.
+ * Read the saved command strings from the top-level `agents` map.
  */
-function savedAgents(settings: Settings, path: string): Record<string, unknown> {
-  const piCli = settings[PI_CLI_KEY];
-  if (!isObject(piCli)) {
-    throw new Error(`no saved configs found\nsettings file: ${path}`);
+function savedAgents(config: ConfigFile, path: string): Record<string, unknown> {
+  if (!isObject(config.agents)) {
+    throw new Error(`no saved configs found\nconfig file: ${path}`);
   }
-
-  const agents: Record<string, unknown> = {};
-  if (isObject(piCli.agents)) {
-    Object.assign(agents, piCli.agents);
-  }
-  for (const [key, value] of Object.entries(piCli)) {
-    if (key === "agents" || key === "custom") continue;
-    if (!Object.hasOwn(agents, key)) agents[key] = value;
-  }
-  return agents;
+  return config.agents;
 }
 
 /**
- * Read the user-defined `piCli.custom` fixtures used by `--custom`. Returns an
- * empty object when there is no settings file or the value is not an object.
+ * Read the user-defined `custom` fixtures used by `--custom`. Returns an empty
+ * object when the value is missing or is not an object.
  */
-function customFixtures(settings: Settings): Record<string, unknown> {
-  const piCli = settings[PI_CLI_KEY];
-  const custom = isObject(piCli) ? piCli.custom : undefined;
-  if (!isObject(custom)) return {};
-  return custom;
+function customFixtures(config: ConfigFile): Record<string, unknown> {
+  if (!isObject(config.custom)) return {};
+  return config.custom;
 }
 
-export function loadCustomFixtures(settingsFilePath?: string): Record<string, unknown> {
-  const path = settingsFilePath || settingsPath();
-  if (!existsSync(path)) return {};
-  return customFixtures(readSettings(path));
+export function loadCustomFixtures(configFilePath?: string): Record<string, unknown> {
+  const path = configFilePath || configPath();
+  return customFixtures(readConfigFile(path));
 }
 
-export function loadConfig(search: string, settingsFilePath?: string): ParsedArguments {
+export function loadConfig(search: string, configFilePath?: string): ParsedArguments {
   validateConfigName(search);
-  const path = settingsFilePath || settingsPath();
-  const settings = readSettings(path);
+  const path = configFilePath || configPath();
+  const config = readConfigFile(path);
 
-  const configs = savedAgents(settings, path);
+  const configs = savedAgents(config, path);
   const names = Object.keys(configs);
   if (names.length === 0) {
-    throw new Error(`no saved configs found\nsettings file: ${path}`);
+    throw new Error(`no saved configs found\nconfig file: ${path}`);
   }
   const exact = names.find((name) => name === search);
   const candidates = exact
@@ -98,7 +69,7 @@ export function loadConfig(search: string, settingsFilePath?: string): ParsedArg
     : names.filter((name) => name.toLowerCase().includes(search.toLowerCase()));
 
   if (candidates.length === 0) {
-    throw new Error(`saved config not found: ${search}\nsettings file: ${path}`);
+    throw new Error(`saved config not found: ${search}\nconfig file: ${path}`);
   }
   if (candidates.length > 1) {
     throw new Error(
@@ -109,7 +80,7 @@ export function loadConfig(search: string, settingsFilePath?: string): ParsedArg
 
   const candidate = candidates[0];
   if (candidate === undefined) {
-    throw new Error(`saved config not found: ${search}\nsettings file: ${path}`);
+    throw new Error(`saved config not found: ${search}\nconfig file: ${path}`);
   }
 
   const command = configs[candidate];
@@ -120,7 +91,7 @@ export function loadConfig(search: string, settingsFilePath?: string): ParsedArg
   // Re-parse the stored command string as fresh argv (skip the leading "pi-cli").
   const tokens = shellSplit(command);
   if (tokens[0] === "pi-cli") tokens.shift();
-  const saved = parseArguments(tokens, customFixtures(settings));
+  const saved = parseArguments(tokens, customFixtures(config));
   saved.importName = candidate;
   return saved;
 }

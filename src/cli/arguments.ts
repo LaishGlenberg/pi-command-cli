@@ -132,7 +132,7 @@ export function parseArguments(
   let customExpansions = 0;
 
   // Fixtures may be passed directly or as a lazy loader, so a plain `--help`
-  // run never has to read settings.json.
+  // run never has to read the config file.
   let fixtures: CustomFixtures | undefined;
   const getFixtures = (): CustomFixtures => {
     if (fixtures === undefined) {
