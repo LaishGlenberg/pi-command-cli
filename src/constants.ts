@@ -2,8 +2,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
-export const SETTINGS_FILENAME = "settings.json";
-export const PI_CLI_KEY = "piCli";
+export const CONFIG_DIR_NAME = "pi-cli";
+export const CONFIG_FILENAME = "config.json";
 export const SOURCE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".ts",
   ".tsx",
