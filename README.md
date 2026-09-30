@@ -11,6 +11,7 @@ A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary 
 - `-bt` / `--built-in-tools` to keep only chosen built-in tools while leaving extension tools enabled
 - `-n` flag to kill ALL external context sources and tools
 - `-S` and `--import` options for saving and loading pi-cli startup options
+- `-ls` / `--list` to print saved agents and custom fixtures from config.json
 - `-cu` / `--custom` to expand user-defined `custom` fixtures from pi-cli's config into arguments
 
 ```bash
@@ -222,6 +223,27 @@ When imported, the stored command is re-parsed from scratch, so extension and
 skill names are resolved again. Import searches exact names first, then unique
 partial matches (case-insensitive).
 
+## List saved configs and fixtures
+
+`-ls` / `--list` prints each saved agent with its command and each top-level
+`custom` fixture with its JSON value, then exits without running pi. Only the
+agent names and fixture keys are colored yellow in a terminal; values stay
+plain, and output is uncolored when piped or when `NO_COLOR` is set.
+
+```bash
+pi-cli --list
+```
+
+```text
+Agents:
+  searcher: pi-cli -e pi-intercom -s playwright-cli
+  quick: pi-cli --model google/gemini
+
+Custom:
+  sys_prompts: ["You are a reviewer agent."]
+  cheap_model: ["--model","google/gemini"]
+```
+
 ## Project structure
 
 ```
@@ -233,6 +255,7 @@ src/
     main.ts         main() orchestration and child process spawning
     arguments.ts    CLI argument parsing, Pi argument building
     options.ts      Option table and matching
+    list.ts         --list output for saved agents and custom fixtures
     custom.ts       --custom expansion into arguments
     help.ts         pi-cli --help output
     pi-help-msg.ts  pi --helpi output

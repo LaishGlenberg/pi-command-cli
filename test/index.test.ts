@@ -8,7 +8,9 @@ import {
   buildPiArguments,
   configDir,
   configPath,
+  formatConfigListing,
   loadConfig,
+  loadConfigListing,
   loadCustomFixtures,
   main,
   parseArguments,
@@ -831,6 +833,63 @@ test("loadCustomFixtures ignores a non-object custom value", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// --list / config listing
+// ---------------------------------------------------------------------------
+
+test("--list and -ls set the list flag", () => {
+  assert.equal(parseArguments(["--list"]).list, true);
+  assert.equal(parseArguments(["-ls"]).list, true);
+});
+
+test("formatConfigListing paints keys yellow and separates the sections", () => {
+  const out = formatConfigListing(
+    { agents: { searcher: "pi-cli -e pi-intercom" }, custom: { sys_prompts: ["hi"] } },
+    { color: true },
+  );
+  assert.equal(
+    out,
+    "Agents:\n  \x1b[33msearcher\x1b[0m: pi-cli -e pi-intercom\n\n" +
+      'Custom:\n  \x1b[33msys_prompts\x1b[0m: ["hi"]',
+  );
+});
+
+test("formatConfigListing is plain without color and marks empty sections", () => {
+  assert.equal(formatConfigListing({ agents: {}, custom: {} }), "Agents:\n  (none)\n\nCustom:\n  (none)");
+  assert.equal(
+    formatConfigListing({ agents: { quick: "pi-cli" }, custom: {} }),
+    "Agents:\n  quick: pi-cli\n\nCustom:\n  (none)",
+  );
+});
+
+test("formatConfigListing serializes non-string values as JSON", () => {
+  assert.equal(
+    formatConfigListing({
+      agents: { weird: 42 },
+      custom: { cheap_model: ["--model", "google/gemini"], opts: { temperature: 0.2 } },
+    }),
+    "Agents:\n  weird: 42\n\n" +
+      'Custom:\n  cheap_model: ["--model","google/gemini"]\n  opts: {"temperature":0.2}',
+  );
+});
+
+test("loadConfigListing reads agents and custom and tolerates missing keys", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(
+    configFile,
+    JSON.stringify({ agents: { reviewer: "pi-cli" }, custom: { sys: ["hi"] } }),
+  );
+  assert.deepEqual(loadConfigListing(configFile), {
+    agents: { reviewer: "pi-cli" },
+    custom: { sys: ["hi"] },
+  });
+  assert.deepEqual(loadConfigListing(join(agentDir, "missing.json")), {
+    agents: {},
+    custom: {},
+  });
+});
+
+// ---------------------------------------------------------------------------
 // custom fixtures (--custom / config.json custom)
 // ---------------------------------------------------------------------------
 
@@ -1016,6 +1075,34 @@ test("main prints help and returns 0 when --help is passed", async () => {
     main(["--help"]),
   );
   assert.equal(result, 0);
+});
+
+test("main prints the config listing and returns 0 for --list", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(
+    configFile,
+    JSON.stringify({ agents: { searcher: "pi-cli" }, custom: { sys: ["hi"] } }),
+  );
+
+  const originalWrite = process.stdout.write;
+  let output = "";
+  process.stdout.write = (chunk) => {
+    output += chunk;
+    return true;
+  };
+  let result;
+  try {
+    result = withEnv(
+      { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: configFile, NO_COLOR: "" },
+      () => main(["-ls"]),
+    );
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  assert.equal(result, 0);
+  assert.equal(output, 'Agents:\n  searcher: pi-cli\n\nCustom:\n  sys: ["hi"]\n');
 });
 
 test("main returns 1 when --save and --import are used together", async () => {

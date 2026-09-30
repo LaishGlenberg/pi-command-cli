@@ -9,6 +9,7 @@ import {
 } from "./arguments.ts";
 import { loadConfig, loadCustomFixtures, saveConfig } from "../config/config.ts";
 import { printHelp } from "./help.ts";
+import { printConfigListing } from "./list.ts";
 import { printHelpi } from "./pi-help-msg.ts";
 
 export function shellQuote(argument: string): string {
@@ -71,6 +72,11 @@ export function main(argv: string[] = process.argv.slice(2)): number | undefined
 
     if (parsed.helpi) {
       printHelpi();
+      return 0;
+    }
+
+    if (parsed.list) {
+      printConfigListing();
       return 0;
     }
 
