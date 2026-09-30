@@ -40,7 +40,7 @@ src/
     main.ts         main() orchestration, shell/Windows quoting, child spawn
     arguments.ts    stripSaveFlag/merge + parseArguments/buildPiArguments + shellSplit
     options.ts      Option table (FLAG_OPTIONS/VALUE_OPTIONS) + matchOption + -bt validation
-    list.ts         `--list` output (keys yellow, values plain)
+    list.ts         `--list` output (config path header, keys yellow, values plain)
     custom.ts       --custom access-path lookup and expansion
     help.ts         `pi-cli --help` text
     pi-help-msg.ts  `pi-cli --helpi` text (pi's own help; keep roughly in sync with pi)

@@ -225,16 +225,19 @@ partial matches (case-insensitive).
 
 ## List saved configs and fixtures
 
-`-ls` / `--list` prints each saved agent with its command and each top-level
-`custom` fixture with its JSON value, then exits without running pi. Only the
-agent names and fixture keys are colored yellow in a terminal; values stay
-plain, and output is uncolored when piped or when `NO_COLOR` is set.
+`-ls` / `--list` prints the path of pi-cli's config file followed by each saved
+agent with its command and each top-level `custom` fixture with its JSON value,
+then exits without running pi. Only the agent names and fixture keys are colored
+yellow in a terminal; values stay plain, and output is uncolored when piped or
+when `NO_COLOR` is set.
 
 ```bash
 pi-cli --list
 ```
 
 ```text
+config path: /home/you/.config/pi-cli/config.json
+
 Agents:
   searcher: pi-cli -e pi-intercom -s playwright-cli
   quick: pi-cli --model google/gemini

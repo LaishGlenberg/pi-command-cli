@@ -1,4 +1,5 @@
 import { loadConfigListing, type ConfigListing } from "../config/config.ts";
+import { configPath } from "../config/config-file.ts";
 
 const YELLOW = "\x1b[33m";
 const RESET = "\x1b[0m";
@@ -14,19 +15,21 @@ export function supportsColor(): boolean {
 
 export interface ListingFormatOptions {
   color?: boolean;
+  configPath?: string;
 }
 
 /**
  * Render the saved agents and custom fixtures. Each agent is shown as
  * `name: command`, and each fixture as `key: JSON value`. Names and keys are
  * painted yellow when `color` is set, and the two sections are separated by a
- * blank line.
+ * blank line. When `configPath` is given, it is printed above the sections as
+ * `config path: <path>`.
  */
 export function formatConfigListing(
   listing: ConfigListing,
   options: ListingFormatOptions = {},
 ): string {
-  const { color = false } = options;
+  const { color = false, configPath } = options;
   const paint = (value: string): string => (color ? `${YELLOW}${value}${RESET}` : value);
   const section = (
     title: string,
@@ -40,7 +43,7 @@ export function formatConfigListing(
     return [`${title}:`, ...lines].join("\n");
   };
   const stringify = (value: unknown): string => JSON.stringify(value) ?? String(value);
-  return [
+  const sections = [
     section(
       "Agents",
       Object.entries(listing.agents),
@@ -48,10 +51,14 @@ export function formatConfigListing(
     ),
     section("Custom", Object.entries(listing.custom), stringify),
   ].join("\n\n");
+  return configPath ? `config path: ${configPath}\n\n${sections}` : sections;
 }
 
 /** Print the saved agents and custom fixtures from pi-cli's config file. */
 export function printConfigListing(configFilePath?: string): void {
-  const listing = loadConfigListing(configFilePath);
-  process.stdout.write(`${formatConfigListing(listing, { color: supportsColor() })}\n`);
+  const path = configFilePath || configPath();
+  const listing = loadConfigListing(path);
+  process.stdout.write(
+    `${formatConfigListing(listing, { color: supportsColor(), configPath: path })}\n`,
+  );
 }

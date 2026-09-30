@@ -841,6 +841,16 @@ test("--list and -ls set the list flag", () => {
   assert.equal(parseArguments(["-ls"]).list, true);
 });
 
+test("formatConfigListing prints the config path above the sections", () => {
+  assert.equal(
+    formatConfigListing(
+      { agents: { quick: "pi-cli" }, custom: {} },
+      { configPath: "/tmp/pi-cli/config.json" },
+    ),
+    "config path: /tmp/pi-cli/config.json\n\nAgents:\n  quick: pi-cli\n\nCustom:\n  (none)",
+  );
+});
+
 test("formatConfigListing paints keys yellow and separates the sections", () => {
   const out = formatConfigListing(
     { agents: { searcher: "pi-cli -e pi-intercom" }, custom: { sys_prompts: ["hi"] } },
@@ -1102,7 +1112,10 @@ test("main prints the config listing and returns 0 for --list", async () => {
   }
 
   assert.equal(result, 0);
-  assert.equal(output, 'Agents:\n  searcher: pi-cli\n\nCustom:\n  sys: ["hi"]\n');
+  assert.equal(
+    output,
+    `config path: ${configFile}\n\nAgents:\n  searcher: pi-cli\n\nCustom:\n  sys: ["hi"]\n`,
+  );
 });
 
 test("main returns 1 when --save and --import are used together", async () => {
