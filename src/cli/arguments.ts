@@ -19,6 +19,7 @@ export interface ParsedArguments {
   dryRun: boolean;
   help?: boolean | undefined;
   helpi?: boolean | undefined;
+  list?: boolean | undefined;
 }
 
 export type CustomSource = CustomFixtures | (() => CustomFixtures);
@@ -196,6 +197,7 @@ export function parseArguments(
 
     if (key === "help") return snapshot({ help: true });
     if (key === "helpi") return snapshot({ helpi: true });
+    if (key === "list") return snapshot({ list: true });
 
     if (key === "dryRun") {
       dryRun = true;
@@ -251,7 +253,7 @@ export function buildPiArguments(
   parsed: ParsedArguments,
   agentDir: string = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR,
 ): string[] {
-  if (parsed.help) return [];
+  if (parsed.help || parsed.list) return [];
 
   const resolved: string[] = [];
   for (let index = 0; index < parsed.piArguments.length; index += 1) {

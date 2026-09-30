@@ -3,6 +3,7 @@ import { BUILTIN_TOOLS, isBuiltinTool, type BuiltinTool } from "../constants.ts"
 export type OptionKey =
   | "help"
   | "helpi"
+  | "list"
   | "nothing"
   | "dryRun"
   | "noDefaults"
@@ -33,6 +34,7 @@ interface ValueOption {
 const FLAG_OPTIONS: readonly { key: OptionKey; flags: readonly string[] }[] = [
   { key: "help", flags: ["-h", "--help"] },
   { key: "helpi", flags: ["-hp", "--helpi"] },
+  { key: "list", flags: ["-ls", "--list"] },
   { key: "nothing", flags: ["-n", "--nothing"] },
   { key: "dryRun", flags: ["--dry-run"] },
   { key: "noDefaults", flags: ["--no-defaults", "--allow-discovery"] },

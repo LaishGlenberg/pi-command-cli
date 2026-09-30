@@ -53,6 +53,25 @@ export function loadCustomFixtures(configFilePath?: string): Record<string, unkn
   return customFixtures(readConfigFile(path));
 }
 
+/** The saved agents and custom fixtures, for `--list`. */
+export interface ConfigListing {
+  agents: Record<string, unknown>;
+  custom: Record<string, unknown>;
+}
+
+/**
+ * Read the top-level `agents` and `custom` maps without requiring either to be
+ * present, so `--list` can print whatever the config file happens to contain.
+ */
+export function loadConfigListing(configFilePath?: string): ConfigListing {
+  const path = configFilePath || configPath();
+  const config = readConfigFile(path);
+  return {
+    agents: isObject(config.agents) ? config.agents : {},
+    custom: customFixtures(config),
+  };
+}
+
 export function loadConfig(search: string, configFilePath?: string): ParsedArguments {
   validateConfigName(search);
   const path = configFilePath || configPath();

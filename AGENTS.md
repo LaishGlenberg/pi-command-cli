@@ -40,6 +40,7 @@ src/
     main.ts         main() orchestration, shell/Windows quoting, child spawn
     arguments.ts    stripSaveFlag/merge + parseArguments/buildPiArguments + shellSplit
     options.ts      Option table (FLAG_OPTIONS/VALUE_OPTIONS) + matchOption + -bt validation
+    list.ts         `--list` output (keys yellow, values plain)
     custom.ts       --custom access-path lookup and expansion
     help.ts         `pi-cli --help` text
     pi-help-msg.ts  `pi-cli --helpi` text (pi's own help; keep roughly in sync with pi)
@@ -65,16 +66,19 @@ graphify-out/        Committed knowledge graph of this repo (see below)
    (`options.ts`) and matched by `matchOption`, which understands detached
    (`--flag value`), equals (`--flag=value`), and attached short (`-fvalue`,
    `-f=value`) spellings. The handled flags are `-e`, `-s`,
-   `-bt`/`--built-in-tools`, `-cu`/`--custom`, `-i`/`--import`, `-S`/`--save`,
-   `-n`/`--nothing`, `--no-defaults`, `--dry-run`, and help; everything else is
+   `-bt`/`--built-in-tools`, `-cu`/`--custom`, `-ls`/`--list`, `-i`/`--import`,
+   `-S`/`--save`, `-n`/`--nothing`, `--no-defaults`, `--dry-run`, and help;
+   everything else is
    pushed untouched into `piArguments`. `-e`/`-s` normalize to
    `--extension <value>` / `--skill <value>` pairs. `custom` is either a
    fixtures object or a lazy `() => fixtures` loader.
 2. `buildPiArguments(parsed, agentDir)` resolves every `--extension`/`--skill`
    value through `resolveExtension`/`resolveSkill`, then prepends discovery
    flags: `-ne` if any extension was named, `-ns` if any skill was named.
-3. `main()` optionally loads/merges a saved config, builds the argument list,
-   and either prints it (`--dry-run`) or spawns `pi` (or `$PI_BIN`).
+3. `main()` handles `--help`/`--helpi`/`--list` (listing prints agent names
+   and custom fixture keys and exits), then optionally loads/merges a saved
+   config, builds the argument list, and either prints it (`--dry-run`) or
+   spawns `pi` (or `$PI_BIN`).
 
 ### Discovery-flag invariant (important)
 
@@ -117,8 +121,9 @@ resolves nothing throws. `buildPiArguments` no longer handles `--custom`; after
 pi-cli owns its config at `~/.config/pi-cli/config.json` (honoring
 `$XDG_CONFIG_HOME`, overridable with `$PI_CLI_CONFIG`), separate from Pi's
 `settings.json`. Saved commands live under the top-level `agents.<name>` key;
-the top-level `custom` key is reserved and must be preserved. There is no
-settings.json fallback. Stored command strings are tokenized with `shellSplit`
+the top-level `custom` key is reserved and must be preserved. `-ls`/`--list`
+reads both maps without requiring either to exist. There is no settings.json
+fallback. Stored command strings are tokenized with `shellSplit`
 (quote-aware) so a quoted `--custom` value round-trips.
 
 ## Conventions
