@@ -5,7 +5,7 @@ import { createInterface } from "node:readline/promises";
 
 import { ALIASES_MARKER } from "../constants.ts";
 import { formatAliasWarnings, writeAliases } from "../config/aliases.ts";
-import { readConfigFile } from "../config/config-file.ts";
+import { readConfigFile, resolveConfigStore } from "../config/config-file.ts";
 
 export type ShellKind = "bash" | "zsh";
 
@@ -112,9 +112,10 @@ export async function runAddAliases(
   const env = options.env ?? process.env;
   const home = options.home ?? homedir();
 
-  const config = readConfigFile(configFilePath);
+  const store = resolveConfigStore(configFilePath);
+  const config = readConfigFile(store.path);
   const agents = isObject(config.agents) ? config.agents : {};
-  const { path: aliasPath, skipped, shadowed } = writeAliases(agents, configFilePath);
+  const { path: aliasPath, skipped, shadowed } = writeAliases(agents, store.path);
   process.stderr.write(formatAliasWarnings(skipped, shadowed));
   process.stdout.write(`pi-cli: wrote ${aliasPath}\n`);
 

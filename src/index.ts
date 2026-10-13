@@ -1,8 +1,31 @@
-export { DEFAULT_AGENT_DIR } from "./constants.ts";
+export {
+  ALIASES_FILENAME,
+  ALIASES_MARKER,
+  CONFIG_DIR_NAME,
+  CONFIG_FILENAME,
+  CONFIG_PATH_KEY,
+  DEFAULT_AGENT_DIR,
+  DEFAULT_CONFIG_DIR,
+  defaultConfigDir,
+  resolveAgentDir,
+} from "./constants.ts";
 export { resolveExtension } from "./resolve/extensions.ts";
 export { resolveSkill } from "./resolve/skills.ts";
 export { saveConfig, loadConfig, loadConfigListing, loadCustomFixtures } from "./config/config.ts";
-export { configDir, configPath } from "./config/config-file.ts";
+export {
+  configDir,
+  configPath,
+  defaultConfigPath,
+  externalConfigPath,
+  initConfigFile,
+  isRecord,
+  readConfigFile,
+  resolveConfigReference,
+  resolveConfigStore,
+  setConfigPath,
+  writeConfigFile,
+  writeFileAtomic,
+} from "./config/config-file.ts";
 export {
   aliasesPath,
   formatAliasWarnings,
@@ -28,8 +51,7 @@ export { main } from "./cli/main.ts";
 export type { ParsedArguments } from "./cli/arguments.ts";
 export type { CustomFixtures } from "./cli/custom.ts";
 export type { ListingFormatOptions } from "./cli/list.ts";
-export type { ConfigListing } from "./config/config.ts";
-export type { ConfigFile } from "./config/config-file.ts";
+export type { ConfigFile, ConfigStore, InitConfigOptions, InitConfigResult } from "./config/config-file.ts";
+export type { ConfigListing, SaveConfigResult } from "./config/config.ts";
 export type { FormattedAliases, WrittenAliases } from "./config/aliases.ts";
-export type { SaveConfigResult } from "./config/config.ts";
 export type { AddAliasesOptions, ShellKind } from "./cli/add-aliases.ts";

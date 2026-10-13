@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ import {
   buildPiArguments,
   configDir,
   configPath,
+  defaultConfigPath,
   detectShell,
   formatAliases,
   formatAliasWarnings,
@@ -33,6 +35,11 @@ import {
   type ParsedArguments,
 } from "../index.ts";
 import { buildSpawnSpec, windowsQuote } from "../src/cli/main.ts";
+
+// `--path` persists the active config directory into the default config file,
+// so point the whole suite at a throwaway directory and never touch a real
+// `~/.config/pi-cli/config.json`.
+process.env.PI_CLI_CONFIG_DIR = await mkdtemp(join(tmpdir(), "pi-cli-config-"));
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -88,7 +95,10 @@ function withEnv<T>(overrides: NodeJS.ProcessEnv, fn: () => T): T {
   const original: NodeJS.ProcessEnv = {};
   for (const key of Object.keys(overrides)) {
     original[key] = process.env[key];
-    process.env[key] = overrides[key];
+    const value = overrides[key];
+    // An explicit `undefined` unsets the variable for the callback.
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
   }
   try {
     return fn();
@@ -110,6 +120,7 @@ function parsedArgs(overrides: Partial<ParsedArguments> = {}): ParsedArguments {
     builtinTools: [],
     nothing: false,
     dryRun: false,
+    configMode: false,
     ...overrides,
   };
 }
@@ -671,6 +682,15 @@ test("saveConfig creates config.json if it does not exist", async () => {
   assert.equal(config.agents["x"], "pi-cli --model google/gemini");
 });
 
+test("saveConfig writes the active JSON config", async () => {
+  const directory = await fixture();
+  const configFile = join(directory, "config.json");
+  saveConfig("reviewer", "pi-cli -e pi-intercom", directory);
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.agents.reviewer, "pi-cli -e pi-intercom");
+  assert.equal(existsSync(join(directory, "settings.json")), false);
+});
+
 test("saveConfig preserves unrelated config keys and custom fixtures", async () => {
   const agentDir = await fixture();
   const configFile = join(agentDir, "config.json");
@@ -683,13 +703,18 @@ test("saveConfig preserves unrelated config keys and custom fixtures", async () 
   assert.equal(config.agents["x"], "pi-cli -e pi-intercom");
 });
 
-test("saveConfig writes the config file with owner-only permissions", async () => {
-  const agentDir = await fixture();
-  const configFile = join(agentDir, "config.json");
+// Windows exposes no owner/group/other bits, so `0o600` cannot be observed.
+test(
+  "saveConfig writes the config file with owner-only permissions",
+  { skip: process.platform === "win32" },
+  async () => {
+    const agentDir = await fixture();
+    const configFile = join(agentDir, "config.json");
 
-  saveConfig("x", "pi-cli -e pi-intercom", configFile);
-  assert.equal((await stat(configFile)).mode & 0o777, 0o600);
-});
+    saveConfig("x", "pi-cli -e pi-intercom", configFile);
+    assert.equal((await stat(configFile)).mode & 0o777, 0o600);
+  },
+);
 
 test("saveConfig rejects invalid config names", async () => {
   const agentDir = await fixture();
@@ -786,7 +811,15 @@ test("loadConfig throws when the config file is missing", async () => {
   const agentDir = await fixture();
 
   assert.throws(() => loadConfig("anything", join(agentDir, "missing.json")), {
-    message: /no saved configs found/,
+    message: /config file not found: /,
+  });
+});
+
+test("loadConfig reports a missing config file clearly", async () => {
+  const directory = await fixture();
+  const missing = join(directory, "no-config-here");
+  assert.throws(() => loadConfig("reviewer", missing), {
+    message: /config file not found: .*no-config-here/,
   });
 });
 
@@ -811,15 +844,27 @@ test("configPath honors PI_CLI_CONFIG", () => {
 });
 
 test("configPath defaults to $XDG_CONFIG_HOME/pi-cli/config.json", () => {
-  withEnv({ XDG_CONFIG_HOME: "/tmp/xdg-config" }, () => {
-    assert.equal(configPath(), join("/tmp/xdg-config", "pi-cli", "config.json"));
-  });
+  withEnv(
+    { PI_CLI_CONFIG: undefined, PI_CLI_CONFIG_DIR: undefined, XDG_CONFIG_HOME: "/tmp/xdg-config" },
+    () => {
+      assert.equal(configPath(), join("/tmp/xdg-config", "pi-cli", "config.json"));
+    },
+  );
 });
 
 test("configDir falls back to ~/.config when XDG_CONFIG_HOME is empty", () => {
-  withEnv({ XDG_CONFIG_HOME: "" }, () => {
+  withEnv({ PI_CLI_CONFIG_DIR: undefined, XDG_CONFIG_HOME: "" }, () => {
     assert.equal(configDir().endsWith(join(".config", "pi-cli")), true);
   });
+});
+
+test("defaultConfigPath honors PI_CLI_CONFIG_DIR", () => {
+  withEnv(
+    { PI_CLI_CONFIG: undefined, PI_CLI_CONFIG_DIR: "/tmp/pi-cli-config-dir" },
+    () => {
+      assert.equal(defaultConfigPath(), join("/tmp/pi-cli-config-dir", "config.json"));
+    },
+  );
 });
 
 test("loadCustomFixtures reads top-level custom fixtures", async () => {
@@ -1094,6 +1139,24 @@ test("saveConfig nests commands under agents and preserves custom", async () => 
   assert.equal(config.agents.reviewer, "pi-cli -e pi-intercom");
 });
 
+test("loadConfig reads a saved command and custom fixtures", async () => {
+  const directory = await fixture();
+  await writeFile(join(directory, "config.json"), JSON.stringify({
+    custom: { sys: ["hi"] },
+    agents: { reviewer: "pi-cli --custom '--system-prompt sys[0]'" },
+  }));
+  const loaded = loadConfig("reviewer", directory);
+  assert.deepEqual(loaded.piArguments, ["--system-prompt", "hi"]);
+  assert.deepEqual(loadCustomFixtures(directory), { sys: ["hi"] });
+});
+
+test("switching config directories records the path in the default config", async () => {
+  const directory = await fixture();
+  const parsed = parseArguments(["--path", directory, "--import", "reviewer"]);
+  assert.equal(parsed.configPath, directory);
+  assert.equal(parsed.importName, "reviewer");
+});
+
 test("loadConfig reads agents and expands quoted custom expressions", async () => {
   const agentDir = await fixture();
   const configFile = join(agentDir, "config.json");
@@ -1107,6 +1170,37 @@ test("loadConfig reads agents and expands quoted custom expressions", async () =
 
   const loaded = loadConfig("reviewer", configFile);
   assert.deepEqual(loaded.piArguments, ["--system-prompt", "hi"]);
+});
+
+test("saved custom fixtures round-trip through an explicit config path", async () => {
+  const agentDir = await fixture();
+  const configDir = join(agentDir, "configs");
+  await mkdir(configDir, { recursive: true });
+  await writeFile(join(configDir, "config.json"), JSON.stringify({ custom: { sys: ["hi"] } }));
+  saveConfig("reviewer", "pi-cli --custom '--system-prompt sys[0]'", configDir);
+  const loaded = loadConfig("reviewer", configDir);
+  assert.deepEqual(loaded.piArguments, ["--system-prompt", "hi"]);
+});
+
+test("main expands custom fixtures from an explicit config path on --dry-run", async () => {
+  const agentDir = await fixture();
+  const configDir = join(agentDir, "configs");
+  await mkdir(configDir, { recursive: true });
+  await writeFile(join(configDir, "config.json"), JSON.stringify({ custom: { sys: ["hello world"] } }));
+
+  const originalWrite = process.stdout.write;
+  let output = "";
+  process.stdout.write = (chunk) => { output += chunk; return true; };
+  let result;
+  try {
+    result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
+      main(["--path", configDir, "--custom", "--system-prompt sys[0]", "--dry-run"]),
+    );
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+  assert.equal(result, 0);
+  assert.equal(output, "pi --system-prompt 'hello world'\n");
 });
 
 test("main expands --custom fixtures from config.json on --dry-run", async () => {

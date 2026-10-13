@@ -16,8 +16,12 @@ export function printHelp(): void {
   process.stdout.write(`  --no-defaults                Do not add default discovery flags\n`);
   process.stdout.write(`  --allow-discovery            Alias for --no-defaults\n`);
   process.stdout.write(`  -n, --nothing                Equivalent to "-ne -ns -nc -np"\n`);
+  process.stdout.write(`  -p, --path <directory>       Use and remember another config directory\n`);
+  process.stdout.write(`  --config                     Create the default config file\n`);
   process.stdout.write(`  --dry-run                    Print the command without running pi\n`);
   process.stdout.write(`  -h, --help                   Show this help\n\n`);
+  process.stdout.write(`Saved configurations live in ~/.config/pi-cli by default\n`);
+  process.stdout.write(`(override with $PI_CLI_CONFIG_DIR).\n`);
   process.stdout.write(`Extension and skill search roots:\n`);
   process.stdout.write(`  $PI_AGENT_DIR/npm/node_modules (or ~/.pi/agent)\n`);
   process.stdout.write(`  $PI_AGENT_DIR/git\n`);

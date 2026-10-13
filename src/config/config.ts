@@ -1,7 +1,9 @@
+import { existsSync } from "node:fs";
+
 import { parseArguments, shellSplit, type ParsedArguments } from "../cli/arguments.ts";
 import { writeAliases } from "./aliases.ts";
 import {
-  configPath,
+  resolveConfigStore,
   readConfigFile,
   writeConfigFile,
   type ConfigFile,
@@ -26,21 +28,21 @@ export interface SaveConfigResult {
 export function saveConfig(
   name: string,
   command: string,
-  configFilePath?: string,
+  configPath?: string,
 ): SaveConfigResult {
   validateConfigName(name);
-  const path = configFilePath || configPath();
-  const config = readConfigFile(path);
+  const store = resolveConfigStore(configPath);
+  const config = readConfigFile(store.path);
   const agents = isObject(config.agents) ? config.agents : {};
 
   agents[name] = command;
   config.agents = agents;
 
-  writeConfigFile(config, path);
+  writeConfigFile(config, store.path);
   // The config is the source of truth, so regenerate the shell alias file
   // alongside it on every save.
-  const { skipped, shadowed } = writeAliases(agents, path);
-  return { path, skipped, shadowed };
+  const { skipped, shadowed } = writeAliases(agents, store.path);
+  return { path: store.path, skipped, shadowed };
 }
 
 /**
@@ -62,9 +64,9 @@ function customFixtures(config: ConfigFile): Record<string, unknown> {
   return config.custom;
 }
 
-export function loadCustomFixtures(configFilePath?: string): Record<string, unknown> {
-  const path = configFilePath || configPath();
-  return customFixtures(readConfigFile(path));
+export function loadCustomFixtures(configPath?: string): Record<string, unknown> {
+  const store = resolveConfigStore(configPath);
+  return customFixtures(readConfigFile(store.path));
 }
 
 /** The saved agents and custom fixtures, for `--list`. */
@@ -77,32 +79,36 @@ export interface ConfigListing {
  * Read the top-level `agents` and `custom` maps without requiring either to be
  * present, so `--list` can print whatever the config file happens to contain.
  */
-export function loadConfigListing(configFilePath?: string): ConfigListing {
-  const path = configFilePath || configPath();
-  const config = readConfigFile(path);
+export function loadConfigListing(configPath?: string): ConfigListing {
+  const store = resolveConfigStore(configPath);
+  const config = readConfigFile(store.path);
   return {
     agents: isObject(config.agents) ? config.agents : {},
     custom: customFixtures(config),
   };
 }
 
-export function loadConfig(search: string, configFilePath?: string): ParsedArguments {
+export function loadConfig(search: string, configPath?: string): ParsedArguments {
   validateConfigName(search);
-  const path = configFilePath || configPath();
-  const config = readConfigFile(path);
+  const store = resolveConfigStore(configPath);
+  if (!existsSync(store.path)) {
+    throw new Error(`config file not found: ${store.path}`);
+  }
+  const config = readConfigFile(store.path);
 
-  const configs = savedAgents(config, path);
+  const configs = savedAgents(config, store.path);
   const names = Object.keys(configs);
   if (names.length === 0) {
-    throw new Error(`no saved configs found\nconfig file: ${path}`);
+    throw new Error(`no saved configs found\nconfig file: ${store.path}`);
   }
+
   const exact = names.find((name) => name === search);
   const candidates = exact
     ? [exact]
     : names.filter((name) => name.toLowerCase().includes(search.toLowerCase()));
 
   if (candidates.length === 0) {
-    throw new Error(`saved config not found: ${search}\nconfig file: ${path}`);
+    throw new Error(`saved config not found: ${search}\nconfig file: ${store.path}`);
   }
   if (candidates.length > 1) {
     throw new Error(
@@ -112,17 +118,12 @@ export function loadConfig(search: string, configFilePath?: string): ParsedArgum
   }
 
   const candidate = candidates[0];
-  if (candidate === undefined) {
-    throw new Error(`saved config not found: ${search}\nconfig file: ${path}`);
-  }
-
-  const command = configs[candidate];
-  if (typeof command !== "string") {
-    throw new Error(`invalid saved config: ${candidate}`);
+  if (candidate === undefined || typeof configs[candidate] !== "string") {
+    throw new Error(`invalid saved config: ${candidate ?? search}`);
   }
 
   // Re-parse the stored command string as fresh argv (skip the leading "pi-cli").
-  const tokens = shellSplit(command);
+  const tokens = shellSplit(configs[candidate]);
   if (tokens[0] === "pi-cli") tokens.shift();
   const saved = parseArguments(tokens, customFixtures(config));
   saved.importName = candidate;

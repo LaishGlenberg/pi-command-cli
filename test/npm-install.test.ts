@@ -7,6 +7,8 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { buildSpawnSpec } from "../src/cli/main.ts";
+
 // Integration test: pack the package the way npm would publish it, install it
 // into a sandboxed global prefix (the same mechanism as `npm install -g`), and
 // run the installed `pi-cli` bin. This catches packaging mistakes that unit
@@ -21,7 +23,14 @@ function run(
   args: string[],
   options: Partial<SpawnSyncOptionsWithStringEncoding> = {},
 ) {
-  const result = spawnSync(command, args, { encoding: "utf8", ...options });
+  // On Windows npm is a `npm.cmd` shim, which Node cannot spawn directly, so
+  // route through cmd.exe the same way pi-cli does when launching pi.
+  const spec = buildSpawnSpec(command, args);
+  const result = spawnSync(spec.file, spec.args, {
+    encoding: "utf8",
+    ...spec.options,
+    ...options,
+  });
   if (result.error) throw result.error;
   return result;
 }
@@ -81,15 +90,17 @@ test(
     assert.equal(install.status, 0, install.stderr);
 
     const binName = process.platform === "win32" ? "pi-cli.cmd" : "pi-cli";
-    const bin = join(prefix, "bin", binName);
+    // npm's global bin dir is the prefix root on Windows, `<prefix>/bin`
+    // everywhere else.
+    const binDir = process.platform === "win32" ? prefix : join(prefix, "bin");
+    const bin = join(binDir, binName);
     assert.ok(existsSync(bin), `installed bin is missing: ${bin}`);
 
     // 3. Run the installed command. `-bt` exercises pi-cli's own argument
     //    handling and produces deterministic output without spawning pi.
+    //    `run` already routes .cmd shims through cmd.exe on Windows.
     const result = run(bin, ["--dry-run", "-bt", "bash"], {
       env: { ...process.env, PI_AGENT_DIR: agentDir },
-      // A .cmd shim cannot be spawned directly on Windows.
-      shell: process.platform === "win32",
     });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(

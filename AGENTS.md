@@ -27,11 +27,13 @@ fresh checkout needs no manual build.
 ```
 index.ts            Bin entry; runs main(), re-exports public API
 src/index.ts        Barrel re-export of the public API (add exports here only)
-src/constants.ts    Agent dir, config filename/dir name, source extensions
-src/cli/            main, arguments/options, list, custom, help
+src/constants.ts    Agent dir, config dir/file names, alias names, built-in tools
+src/cli/            main, arguments/options, list, add-aliases, config-cmd, custom, help
 src/resolve/        extension/skill name -> path (walk, packages, matching)
-src/config/         config file read/write + save/load
-test/index.test.ts  All tests (test/npm-install.test.ts is the pack/install IT)
+src/config/         config-file (paths/IO) + config (save/load) + aliases
+test/index.test.ts        Most tests
+test/config-path.test.ts  Config path/store and `--path` coverage
+test/npm-install.test.ts  Pack/install integration test
 ```
 
 Entry flow: `index.ts` -> `src/cli/main.ts#main` -> `src/cli/arguments.ts`.
@@ -59,13 +61,25 @@ honored. Strings substitute as-is, arrays spread, other values JSON-serialize;
 unresolved tokens pass through; an expression resolving nothing throws. After
 `--`, arguments are literal and forwarded to pi.
 
-**Config** lives at `~/.config/pi-cli/config.json` (honors `$XDG_CONFIG_HOME`,
-overridable with `$PI_CLI_CONFIG`), separate from Pi's `settings.json` (never
-touch it; no settings.json fallback). Saved commands live under top-level
-`agents.<name>`; top-level `custom` is reserved and must be preserved. Write
-atomically (temp + rename) with `0600`, preserving unrelated keys. Stored
-command strings are tokenized with `shellSplit` (quote-aware) so a quoted
-`--custom` value round-trips.
+**`-p`/`--path` and `--config`** - `-p <directory>` selects a config directory
+and records it as top-level `path` in the default config, so later commands use
+it; `--config` creates the default config file and exits.
+
+**`-ls`/`--list` and `-aa`/`--add-aliases`** - `--list` prints saved agents and
+custom fixtures (tolerating a missing file); `--add-aliases` regenerates
+`aliases.sh` next to the config and offers to import it from the rc file.
+
+**Config** lives at `~/.config/pi-cli/config.json`, a single JSON store separate
+from Pi's `settings.json` (never touch it; no settings.json fallback). The
+directory honors `$PI_CLI_CONFIG_DIR`, then `$XDG_CONFIG_HOME` (falling back to
+`~/.config`); `$PI_CLI_CONFIG` overrides the whole file path. Saved commands live
+under top-level `agents.<name>`; top-level `custom` is reserved and must be
+preserved; top-level `path` records the `--path` directory. `loadConfig` on a
+missing file throws `config file not found: <path>`; `loadCustomFixtures`,
+`loadConfigListing`, and `--list` tolerate a missing file. Write atomically (temp
++ rename) with `0600`, preserving unrelated keys. Stored command strings are
+tokenized with `shellSplit` (quote-aware) so a quoted `--custom` value
+round-trips. Saving regenerates `aliases.sh` alongside the config.
 
 ## Conventions
 
@@ -88,9 +102,11 @@ command strings are tokenized with `shellSplit` (quote-aware) so a quoted
 
 ## Testing
 
-- Tests live in `test/index.test.ts`. Use `fixture()` for a fake agent dir and
-  `withEnv` to set `PI_AGENT_DIR`/`PI_BIN`/`PI_CLI_CONFIG` (always point the
-  config at a temp file; never touch the real config).
+- Tests live in `test/index.test.ts` (plus `test/config-path.test.ts` for config
+  path resolution). Use `fixture()` for a fake agent dir and `withEnv` to set
+  `PI_AGENT_DIR`/`PI_BIN`/`PI_CLI_CONFIG`; `index.test.ts` also sets a
+  process-wide `PI_CLI_CONFIG_DIR`. Always point the config at a temp location;
+  never touch the real config.
 - Prefer asserting on `parseArguments`/`buildPiArguments` output over spawning
   pi. Use the `parsedArgs()` helper for `buildPiArguments`-only tests.
 - `test/npm-install.test.ts` runs `npm pack` (builds `dist/` via `prepack`),

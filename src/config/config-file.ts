@@ -7,9 +7,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
-import { CONFIG_DIR_NAME, CONFIG_FILENAME } from "../constants.ts";
+import { CONFIG_FILENAME, CONFIG_PATH_KEY, defaultConfigDir } from "../constants.ts";
 
 /**
  * The on-disk shape of pi-cli's own config file. It is independent of Pi's
@@ -22,24 +22,87 @@ export interface ConfigFile {
   [key: string]: unknown;
 }
 
+/** The config file and directory currently used by pi-cli. */
+export interface ConfigStore {
+  path: string;
+  directory: string;
+}
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
- * Directory holding pi-cli's config. Uses `$XDG_CONFIG_HOME` when set, and
- * falls back to `~/.config`, matching the XDG base directory spec.
+ * Directory holding pi-cli's config. Uses `$PI_CLI_CONFIG_DIR` first, then
+ * `$XDG_CONFIG_HOME` (falling back to `~/.config`), matching the XDG base
+ * directory spec.
  */
 export function configDir(): string {
-  const xdg = process.env.XDG_CONFIG_HOME;
-  const base = xdg && xdg.trim() !== "" ? xdg : join(homedir(), ".config");
-  return join(base, CONFIG_DIR_NAME);
+  return defaultConfigDir();
+}
+
+function storeFromFile(filePath: string): ConfigStore {
+  return { path: filePath, directory: dirname(filePath) };
+}
+
+function storeFromDirectory(directory: string): ConfigStore {
+  return { path: join(directory, CONFIG_FILENAME), directory };
 }
 
 /**
- * Absolute path to pi-cli's config file. `$PI_CLI_CONFIG` overrides the whole
- * path (useful for tests and non-standard layouts).
+ * The config file that holds the default store and the `--path` pointer. This
+ * is `$PI_CLI_CONFIG` (an explicit file path), else `<config dir>/config.json`.
  */
-export function configPath(): string {
-  return process.env.PI_CLI_CONFIG || join(configDir(), CONFIG_FILENAME);
+export function defaultConfigPath(): string {
+  const override = process.env.PI_CLI_CONFIG;
+  if (override && override.trim() !== "") return override;
+  return join(configDir(), CONFIG_FILENAME);
 }
 
+function defaultStore(): ConfigStore {
+  return storeFromFile(defaultConfigPath());
+}
+
+/** Whether a user-supplied path names a config file rather than a directory. */
+function targetIsFile(target: string): boolean {
+  return target.replaceAll("\\", "/").endsWith(`/${CONFIG_FILENAME}`);
+}
+
+/**
+ * Resolve the active config. An explicit target (from `--path`, `--save`, or a
+ * test) wins; otherwise the default config's `path` pointer selects another
+ * directory, and failing that the default config is used.
+ */
+export function resolveConfigStore(target?: string): ConfigStore {
+  if (target) return targetIsFile(target) ? storeFromFile(target) : storeFromDirectory(target);
+  const root = defaultStore();
+  if (!existsSync(root.path)) return root;
+  const reference = readConfigFile(root.path)[CONFIG_PATH_KEY];
+  if (typeof reference !== "string" || reference.trim() === "") return root;
+  return storeFromDirectory(resolveConfigReference(reference, root.path));
+}
+
+/** Absolute path to the active config file. */
+export function configPath(): string {
+  return resolveConfigStore().path;
+}
+
+export function externalConfigPath(target?: string): string | undefined {
+  const store = resolveConfigStore(target);
+  return existsSync(store.path) ? store.path : undefined;
+}
+
+/** Persist the active config directory in the default config file. */
+export function setConfigPath(directory: string): string {
+  if (!directory.trim()) throw new Error("config path must not be empty");
+  const root = defaultStore();
+  const document = readConfigFile(root.path);
+  document[CONFIG_PATH_KEY] = resolve(directory);
+  writeConfigFile(document, root.path);
+  return root.path;
+}
+
+/** Read a config file. A missing file reads as an empty config. */
 export function readConfigFile(configFilePath?: string): ConfigFile {
   const path = configFilePath || configPath();
   if (!existsSync(path)) return {};
@@ -52,10 +115,15 @@ export function readConfigFile(configFilePath?: string): ConfigFile {
     throw new Error(`could not read config file ${path}: ${message}`);
   }
 
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
+  if (!isRecord(config)) {
     throw new Error(`invalid config file: ${path}`);
   }
-  return config as ConfigFile;
+  return config;
+}
+
+export function writeConfigFile(config: ConfigFile, configFilePath?: string): void {
+  const path = configFilePath || configPath();
+  writeFileAtomic(path, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 /**
@@ -70,7 +138,31 @@ export function writeFileAtomic(path: string, content: string, mode = 0o600): vo
   chmodSync(path, mode);
 }
 
-export function writeConfigFile(config: ConfigFile, configFilePath?: string): void {
-  const path = configFilePath || configPath();
-  writeFileAtomic(path, `${JSON.stringify(config, null, 2)}\n`);
+export interface InitConfigOptions {
+  directory: string;
+  filename?: string;
+  force?: boolean;
+}
+
+export interface InitConfigResult {
+  path: string;
+  created: boolean;
+}
+
+/** Create the per-user config file without overwriting an existing one. */
+export function initConfigFile({
+  directory,
+  filename = CONFIG_FILENAME,
+  force = false,
+}: InitConfigOptions): InitConfigResult {
+  const path = join(directory, filename);
+  if (existsSync(path) && !force) return { path, created: false };
+  writeConfigFile({}, path);
+  return { path, created: true };
+}
+
+/** Resolve a relative config path next to the default config file. */
+export function resolveConfigReference(reference: string, sourcePath: string): string {
+  if (reference.startsWith("~")) return join(process.env.HOME || homedir(), reference.slice(1));
+  return isAbsolute(reference) ? reference : resolve(dirname(sourcePath), reference);
 }

@@ -14,6 +14,8 @@ A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary 
 - `-ls` / `--list` to print saved agents and custom fixtures from config.json
 - `-aa` / `--add-aliases` to generate shell aliases for saved agents and wire them into your rc file
 - `-cu` / `--custom` to expand user-defined `custom` fixtures from pi-cli's config into arguments
+- `-p` / `--path` to use and remember another config directory
+- `--config` to create the default config file
 
 ```bash
 pi-cli -e pi-intercom
@@ -139,7 +141,11 @@ Set `PI_BIN` to use a different Pi executable. Paths with spaces work on
 Windows too (`C:\Program Files\...\pi.cmd`).
 
 pi-cli stores its own config at `~/.config/pi-cli/config.json` (honoring
-`$XDG_CONFIG_HOME`). Set `PI_CLI_CONFIG` to point at a different file.
+`$XDG_CONFIG_HOME`, or `$PI_CLI_CONFIG_DIR`). Set `PI_CLI_CONFIG` to point at a
+different file. Use `-p` / `--path <directory>` to switch to another config
+directory: pi-cli records it under the top-level `path` key in the default
+config and uses it for later commands. `--config` creates the default
+`config.json` if it does not exist.
 
 ## Custom fixtures (`--custom`)
 
@@ -307,6 +313,7 @@ src/
     options.ts      Option table and matching
     list.ts         --list output for saved agents and custom fixtures
     add-aliases.ts  -aa shell detection, rc import, interactive prompt
+    config-cmd.ts   --config default config initializer
     custom.ts       --custom expansion into arguments
     help.ts         pi-cli --help output
     pi-help-msg.ts  pi --helpi output

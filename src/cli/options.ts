@@ -5,6 +5,7 @@ export type OptionKey =
   | "helpi"
   | "list"
   | "addAliases"
+  | "config"
   | "nothing"
   | "dryRun"
   | "noDefaults"
@@ -13,7 +14,8 @@ export type OptionKey =
   | "extension"
   | "skill"
   | "save"
-  | "import";
+  | "import"
+  | "path";
 
 export interface MatchedOption {
   key: OptionKey;
@@ -37,6 +39,7 @@ const FLAG_OPTIONS: readonly { key: OptionKey; flags: readonly string[] }[] = [
   { key: "helpi", flags: ["-hp", "--helpi"] },
   { key: "list", flags: ["-ls", "--list"] },
   { key: "addAliases", flags: ["-aa", "--add-aliases"] },
+  { key: "config", flags: ["--config"] },
   { key: "nothing", flags: ["-n", "--nothing"] },
   { key: "dryRun", flags: ["--dry-run"] },
   { key: "noDefaults", flags: ["--no-defaults", "--allow-discovery"] },
@@ -53,6 +56,7 @@ const VALUE_OPTIONS: readonly ValueOption[] = [
   { key: "skill", flags: ["-s", "--skill"], requires: "a skill name or path" },
   { key: "save", flags: ["-S", "--save"], requires: "a config name" },
   { key: "import", flags: ["-i", "--import"], requires: "a config name" },
+  { key: "path", flags: ["-p", "--path"], requires: "a config directory" },
 ];
 
 /**

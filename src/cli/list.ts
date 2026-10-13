@@ -1,5 +1,5 @@
 import { loadConfigListing, type ConfigListing } from "../config/config.ts";
-import { configPath } from "../config/config-file.ts";
+import { resolveConfigStore } from "../config/config-file.ts";
 
 const YELLOW = "\x1b[33m";
 const RESET = "\x1b[0m";
@@ -56,7 +56,7 @@ export function formatConfigListing(
 
 /** Print the saved agents and custom fixtures from pi-cli's config file. */
 export function printConfigListing(configFilePath?: string): void {
-  const path = configFilePath || configPath();
+  const path = resolveConfigStore(configFilePath).path;
   const listing = loadConfigListing(path);
   process.stdout.write(
     `${formatConfigListing(listing, { color: supportsColor(), configPath: path })}\n`,

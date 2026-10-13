@@ -1,4 +1,4 @@
-import { BUILTIN_TOOLS, DEFAULT_AGENT_DIR, type BuiltinTool } from "../constants.ts";
+import { BUILTIN_TOOLS, resolveAgentDir, type BuiltinTool } from "../constants.ts";
 import { resolveExtension } from "../resolve/extensions.ts";
 import { resolveSkill } from "../resolve/skills.ts";
 import { resolveCustomExpression, type CustomFixtures } from "./custom.ts";
@@ -17,6 +17,8 @@ export interface ParsedArguments {
   saveName?: string | undefined;
   importName?: string | undefined;
   dryRun: boolean;
+  configMode: boolean;
+  configPath?: string | undefined;
   help?: boolean | undefined;
   helpi?: boolean | undefined;
   list?: boolean | undefined;
@@ -24,6 +26,21 @@ export interface ParsedArguments {
 }
 
 export type CustomSource = CustomFixtures | (() => CustomFixtures);
+
+export function stripPathFlag(argv: string[]): string[] {
+  const kept: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === undefined) continue;
+    const option = matchOption(argument);
+    if (option?.key !== "path") {
+      kept.push(argument);
+      continue;
+    }
+    if (option.inline === undefined) index += 1;
+  }
+  return kept;
+}
 
 export function stripSaveFlag(argv: string[]): string[] {
   const kept: string[] = [];
@@ -55,6 +72,8 @@ export function mergeParsedArguments(
     ],
     nothing: saved.nothing || current.nothing,
     dryRun: saved.dryRun || current.dryRun,
+    configMode: saved.configMode || current.configMode,
+    configPath: current.configPath,
   };
 }
 
@@ -141,6 +160,8 @@ export function parseArguments(
   let saveName: string | undefined;
   let importName: string | undefined;
   let dryRun = false;
+  let configMode = false;
+  let configPath: string | undefined;
   let customExpansions = 0;
 
   // Fixtures may be passed directly or as a lazy loader, so a plain `--help`
@@ -163,6 +184,8 @@ export function parseArguments(
     saveName,
     importName,
     dryRun,
+    configMode,
+    configPath,
     ...extra,
   });
 
@@ -216,6 +239,16 @@ export function parseArguments(
       continue;
     }
 
+    if (key === "config") {
+      configMode = true;
+      continue;
+    }
+
+    if (key === "path") {
+      configPath = takeValue();
+      continue;
+    }
+
     if (key === "noDefaults") {
       useDefaults = false;
       continue;
@@ -263,7 +296,7 @@ export function parseArguments(
 
 export function buildPiArguments(
   parsed: ParsedArguments,
-  agentDir: string = process.env.PI_AGENT_DIR || DEFAULT_AGENT_DIR,
+  agentDir: string = resolveAgentDir(),
 ): string[] {
   if (parsed.help || parsed.list) return [];
 
