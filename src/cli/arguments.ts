@@ -20,6 +20,7 @@ export interface ParsedArguments {
   help?: boolean | undefined;
   helpi?: boolean | undefined;
   list?: boolean | undefined;
+  addAliases?: boolean | undefined;
 }
 
 export type CustomSource = CustomFixtures | (() => CustomFixtures);
@@ -58,11 +59,21 @@ export function mergeParsedArguments(
 }
 
 /**
+ * Quote a single argument so it round-trips through a POSIX shell. Safe
+ * characters are left bare; everything else is single-quoted, with embedded
+ * single quotes escaped as `'\''`. This is the inverse of `shellSplit`.
+ */
+export function shellQuote(argument: string): string {
+  if (/^[a-zA-Z0-9_./:@%+=,-]+$/.test(argument)) return argument;
+  return `'${argument.replaceAll("'", "'\\''")}'`;
+}
+
+/**
  * Split a shell-like command string into argv tokens. Single quotes are
  * literal, double quotes allow backslash escapes, and a backslash escapes the
- * next character outside quotes. This is the inverse of `shellQuote` in
- * `cli/main.js` and lets saved commands contain arguments with spaces (for
- * example a quoted `--custom` expression).
+ * next character outside quotes. This is the inverse of `shellQuote`; it lets
+ * saved commands contain arguments with spaces (for example a quoted `--custom`
+ * expression).
  */
 export function shellSplit(input: string): string[] {
   const tokens: string[] = [];
@@ -198,6 +209,7 @@ export function parseArguments(
     if (key === "help") return snapshot({ help: true });
     if (key === "helpi") return snapshot({ helpi: true });
     if (key === "list") return snapshot({ list: true });
+    if (key === "addAliases") return snapshot({ addAliases: true });
 
     if (key === "dryRun") {
       dryRun = true;

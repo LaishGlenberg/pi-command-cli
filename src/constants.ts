@@ -4,6 +4,10 @@ import { join } from "node:path";
 export const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
 export const CONFIG_DIR_NAME = "pi-cli";
 export const CONFIG_FILENAME = "config.json";
+// Shell alias file generated next to config.json and sourced from the user's
+// rc file. The marker comment lets `-aa` avoid adding the import twice.
+export const ALIASES_FILENAME = "aliases.sh";
+export const ALIASES_MARKER = "# pi-cli aliases";
 export const SOURCE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".ts",
   ".tsx",

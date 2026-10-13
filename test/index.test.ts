@@ -5,10 +5,18 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  aliasesPath,
+  appendAliasImport,
+  buildAliasImport,
   buildPiArguments,
   configDir,
   configPath,
+  detectShell,
+  formatAliases,
+  formatAliasWarnings,
   formatConfigListing,
+  hasAliasImport,
+  isShellBuiltin,
   loadConfig,
   loadConfigListing,
   loadCustomFixtures,
@@ -16,9 +24,12 @@ import {
   parseArguments,
   resolveCustomExpression,
   resolveExtension,
+  resolveRcFile,
   resolveSkill,
+  runAddAliases,
   saveConfig,
   shellSplit,
+  writeAliases,
   type ParsedArguments,
 } from "../index.ts";
 import { buildSpawnSpec, windowsQuote } from "../src/cli/main.ts";
@@ -1350,4 +1361,235 @@ test("resolveSkill on a non-existent agent directory throws not-found", () => {
   assert.throws(() => resolveSkill("anything", "/tmp/does-not-exist-12345"), {
     message: /skill not found: anything/,
   });
+});
+
+// ---------------------------------------------------------------------------
+// Shell aliases (aliases.sh + -aa rc wiring)
+// ---------------------------------------------------------------------------
+
+function captureOutput(): { output: string; errors: string; restore: () => void } {
+  const originalOut = process.stdout.write;
+  const originalErr = process.stderr.write;
+  let output = "";
+  let errors = "";
+  process.stdout.write = (chunk) => {
+    output += chunk;
+    return true;
+  };
+  process.stderr.write = (chunk) => {
+    errors += chunk;
+    return true;
+  };
+  return {
+    get output() {
+      return output;
+    },
+    get errors() {
+      return errors;
+    },
+    restore() {
+      process.stdout.write = originalOut;
+      process.stderr.write = originalErr;
+    },
+  };
+}
+
+test("formatAliases sorts aliases and skips invalid shell names", () => {
+  const { content, skipped } = formatAliases({
+    beta: "pi-cli -i beta",
+    alpha: "pi-cli -i alpha",
+    "bad name": "pi-cli",
+    "2fa": "pi-cli",
+    "a/b": "pi-cli",
+  });
+
+  assert.equal(content.includes("alias alpha='pi-cli -i alpha'"), true);
+  assert.equal(content.includes("alias beta='pi-cli -i beta'"), true);
+  assert.equal(content.indexOf("alpha") < content.indexOf("beta"), true);
+  assert.deepEqual(skipped.sort(), ["2fa", "a/b", "bad name"]);
+});
+
+test("formatAliases emits aliases that shadow shell builtins but reports them", () => {
+  const { content, skipped, shadowed } = formatAliases({
+    test: "pi-cli -e pi-intercom",
+    echo: "pi-cli",
+    worker: "pi-cli -s pi-intercom",
+  });
+
+  assert.equal(content.includes("alias test='pi-cli -i test'"), true);
+  assert.equal(content.includes("alias echo='pi-cli -i echo'"), true);
+  assert.deepEqual(skipped, []);
+  assert.deepEqual(shadowed, ["echo", "test"]);
+});
+
+test("isShellBuiltin distinguishes builtins from ordinary names", () => {
+  assert.equal(isShellBuiltin("test"), true);
+  assert.equal(isShellBuiltin("read"), true);
+  assert.equal(isShellBuiltin("if"), true);
+  assert.equal(isShellBuiltin("worker"), false);
+});
+
+test("formatAliasWarnings explains skipped and builtin-shadowing aliases", () => {
+  const message = formatAliasWarnings(["bad name"], ["test"]);
+  assert.equal(message.includes('skipped alias "bad name"'), true);
+  assert.equal(message.includes('alias "test" shadows a shell builtin'), true);
+  assert.equal(message.includes("non-interactive shells"), true);
+});
+
+test("saveConfig regenerates aliases.sh next to config.json", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+
+  saveConfig("searcher", "pi-cli -e pi-intercom", configFile);
+  saveConfig("reviewer", "pi-cli -s playwright-cli", configFile);
+
+  const aliases = await readFile(aliasesPath(configFile), "utf8");
+  assert.equal(aliases.includes("alias searcher='pi-cli -i searcher'"), true);
+  assert.equal(aliases.includes("alias reviewer='pi-cli -i reviewer'"), true);
+});
+
+test("writeAliases rewrites the file so it stays in sync with the config", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+
+  writeAliases({ stale: "pi-cli" }, configFile);
+  writeAliases({ fresh: "pi-cli" }, configFile);
+
+  const aliases = await readFile(aliasesPath(configFile), "utf8");
+  assert.equal(aliases.includes("stale"), false);
+  assert.equal(aliases.includes("alias fresh='pi-cli -i fresh'"), true);
+});
+
+test("detectShell recognizes bash and zsh, including Git Bash's bash.exe", () => {
+  assert.equal(detectShell("/usr/bin/bash"), "bash");
+  assert.equal(detectShell("C:\\Program Files\\Git\\bin\\bash.exe"), "bash");
+  assert.equal(detectShell("/bin/zsh"), "zsh");
+  assert.equal(detectShell("/usr/bin/fish"), undefined);
+  assert.equal(detectShell(undefined), undefined);
+});
+
+test("resolveRcFile honors ZDOTDIR for zsh and uses .bashrc for bash", () => {
+  assert.equal(resolveRcFile("zsh", { ZDOTDIR: "/tmp/zdot" }, "/home/u"), join("/tmp/zdot", ".zshrc"));
+  assert.equal(resolveRcFile("zsh", {}, "/home/u"), join("/home/u", ".zshrc"));
+  assert.equal(resolveRcFile("bash", {}, "/home/u"), join("/home/u", ".bashrc"));
+});
+
+test("buildAliasImport uses $HOME and hasAliasImport detects the marker", () => {
+  const line = buildAliasImport("/home/u/.config/pi-cli/aliases.sh", "/home/u");
+  assert.equal(line.includes('$HOME/.config/pi-cli/aliases.sh'), true);
+  assert.equal(hasAliasImport(line), true);
+  assert.equal(hasAliasImport("export FOO=1\n"), false);
+
+  // Windows drive paths are rewritten to $HOME so Git Bash can source them.
+  const windows = buildAliasImport("C:\\Users\\u\\.config\\pi-cli\\aliases.sh", "C:\\Users\\u");
+  assert.equal(windows.includes("$HOME/.config/pi-cli/aliases.sh"), true);
+  assert.equal(windows.includes("C:/"), false);
+});
+
+test("appendAliasImport keeps existing content and a separating blank line", () => {
+  const block = buildAliasImport("/home/u/.config/pi-cli/aliases.sh", "/home/u");
+  assert.equal(appendAliasImport("", "/home/u/.config/pi-cli/aliases.sh", "/home/u"), `${block}\n`);
+  assert.equal(
+    appendAliasImport("export FOO=1\n", "/home/u/.config/pi-cli/aliases.sh", "/home/u"),
+    `export FOO=1\n\n${block}\n`,
+  );
+});
+
+test("parseArguments recognizes -aa and --add-aliases", () => {
+  assert.equal(parseArguments(["-aa"]).addAliases, true);
+  assert.equal(parseArguments(["--add-aliases"]).addAliases, true);
+  assert.equal(parseArguments([]).addAliases, undefined);
+});
+
+async function aliasFixture() {
+  const home = await mkdtemp(join(tmpdir(), "pi-cli-home-"));
+  const configDirPath = join(home, ".config", "pi-cli");
+  await mkdir(configDirPath, { recursive: true });
+  const configFile = join(configDirPath, "config.json");
+  await writeFile(configFile, JSON.stringify({ agents: { searcher: "pi-cli -e pi-intercom" } }));
+  return { home, configFile, rcPath: join(home, ".bashrc") };
+}
+
+test("runAddAliases writes aliases and appends the import when confirmed", async () => {
+  const { home, configFile, rcPath } = await aliasFixture();
+  await writeFile(rcPath, "export FOO=1\n");
+
+  const capture = captureOutput();
+  let question = "";
+  try {
+    const code = await runAddAliases(configFile, {
+      env: { SHELL: "/bin/bash" },
+      home,
+      confirm: async (q) => {
+        question = q;
+        return true;
+      },
+    });
+    assert.equal(code, 0);
+  } finally {
+    capture.restore();
+  }
+
+  assert.match(question, /add to/);
+  assert.match(capture.output, /updated/);
+  const aliases = await readFile(aliasesPath(configFile), "utf8");
+  assert.equal(aliases.includes("alias searcher='pi-cli -i searcher'"), true);
+  const rc = await readFile(rcPath, "utf8");
+  assert.equal(hasAliasImport(rc), true);
+  assert.match(rc, /\$HOME\/\.config\/pi-cli\/aliases\.sh/);
+  assert.equal(rc.startsWith("export FOO=1\n"), true);
+});
+
+test("runAddAliases is idempotent once the rc file imports the aliases", async () => {
+  const { home, configFile, rcPath } = await aliasFixture();
+  await writeFile(rcPath, "export FOO=1\n");
+  const env = { SHELL: "/bin/bash" };
+
+  const first = captureOutput();
+  try {
+    await runAddAliases(configFile, { env, home, confirm: async () => true });
+  } finally {
+    first.restore();
+  }
+  const afterFirst = await readFile(rcPath, "utf8");
+
+  const second = captureOutput();
+  let confirmCalls = 0;
+  try {
+    const code = await runAddAliases(configFile, {
+      env,
+      home,
+      confirm: async () => {
+        confirmCalls += 1;
+        return true;
+      },
+    });
+    assert.equal(code, 0);
+  } finally {
+    second.restore();
+  }
+
+  assert.equal(confirmCalls, 0);
+  assert.match(second.output, /already imported/);
+  assert.equal(await readFile(rcPath, "utf8"), afterFirst);
+});
+
+test("runAddAliases leaves the rc file unchanged when declined", async () => {
+  const { home, configFile, rcPath } = await aliasFixture();
+  await writeFile(rcPath, "export FOO=1\n");
+
+  const capture = captureOutput();
+  try {
+    const code = await runAddAliases(configFile, {
+      env: { SHELL: "/bin/bash" },
+      home,
+      confirm: async () => false,
+    });
+    assert.equal(code, 0);
+  } finally {
+    capture.restore();
+  }
+
+  assert.equal(await readFile(rcPath, "utf8"), "export FOO=1\n");
+  assert.equal(hasAliasImport(await readFile(rcPath, "utf8")), false);
 });

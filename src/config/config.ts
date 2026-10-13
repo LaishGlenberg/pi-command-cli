@@ -1,4 +1,5 @@
 import { parseArguments, shellSplit, type ParsedArguments } from "../cli/arguments.ts";
+import { writeAliases } from "./aliases.ts";
 import {
   configPath,
   readConfigFile,
@@ -16,7 +17,17 @@ export function validateConfigName(name: string): void {
   }
 }
 
-export function saveConfig(name: string, command: string, configFilePath?: string): string {
+export interface SaveConfigResult {
+  path: string;
+  skipped: string[];
+  shadowed: string[];
+}
+
+export function saveConfig(
+  name: string,
+  command: string,
+  configFilePath?: string,
+): SaveConfigResult {
   validateConfigName(name);
   const path = configFilePath || configPath();
   const config = readConfigFile(path);
@@ -26,7 +37,10 @@ export function saveConfig(name: string, command: string, configFilePath?: strin
   config.agents = agents;
 
   writeConfigFile(config, path);
-  return path;
+  // The config is the source of truth, so regenerate the shell alias file
+  // alongside it on every save.
+  const { skipped, shadowed } = writeAliases(agents, path);
+  return { path, skipped, shadowed };
 }
 
 /**

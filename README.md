@@ -12,6 +12,7 @@ A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary 
 - `-n` flag to kill ALL external context sources and tools
 - `-S` and `--import` options for saving and loading pi-cli startup options
 - `-ls` / `--list` to print saved agents and custom fixtures from config.json
+- `-aa` / `--add-aliases` to generate shell aliases for saved agents and wire them into your rc file
 - `-cu` / `--custom` to expand user-defined `custom` fixtures from pi-cli's config into arguments
 
 ```bash
@@ -256,6 +257,43 @@ Custom:
   cheap_model: ["--model","google/gemini"]
 ```
 
+## Shell aliases
+
+Every saved agent also gets a shell alias, written to
+`~/.config/pi-cli/aliases.sh` (next to `config.json`, so `$XDG_CONFIG_HOME` and
+`$PI_CLI_CONFIG` move it too). The file is regenerated on every `--save`, so it
+stays in sync with the `agents` map; the config remains the source of truth and
+the alias file should not be edited by hand.
+
+```bash
+alias searcher='pi-cli -i searcher'
+alias quick='pi-cli -i quick'
+```
+
+Run `-aa` / `--add-aliases` to generate the file, then be prompted to add a
+single import line to your rc file (`.bashrc`, or `.zshrc` honoring
+`$ZDOTDIR`). The shell is detected from `$SHELL`; the line is added only once,
+guarded by a marker comment, and is skipped if the rc file already imports the
+aliases.
+
+```bash
+pi-cli --add-aliases
+```
+
+```sh
+# pi-cli aliases
+[ -f "$HOME/.config/pi-cli/aliases.sh" ] && . "$HOME/.config/pi-cli/aliases.sh"
+```
+
+Names that are not valid shell alias identifiers (spaces, quotes, a leading
+digit, ...) are skipped with a warning and omitted from the alias file. Names
+that shadow a shell builtin or reserved word (`test`, `echo`, `read`, `source`,
+...) are still written, because they work in an interactive shell, but `--save`
+and `--add-aliases` warn that bash ignores them in non-interactive shells (where
+`expand_aliases` is off), so the builtin runs instead - often silently. In a
+non-interactive shell `--add-aliases` prints the import line instead of editing
+anything.
+
 ## Project structure
 
 ```
@@ -265,9 +303,10 @@ src/
   constants.ts      Shared constants (agent dir, config filename, extensions)
   cli/
     main.ts         main() orchestration and child process spawning
-    arguments.ts    CLI argument parsing, Pi argument building
+    arguments.ts    CLI argument parsing, Pi argument building, shell quoting
     options.ts      Option table and matching
     list.ts         --list output for saved agents and custom fixtures
+    add-aliases.ts  -aa shell detection, rc import, interactive prompt
     custom.ts       --custom expansion into arguments
     help.ts         pi-cli --help output
     pi-help-msg.ts  pi --helpi output
@@ -280,6 +319,7 @@ src/
   config/
     config-file.ts  Low-level ~/.config/pi-cli/config.json read/write
     config.ts       Saved pi-cli configurations + custom fixtures
+    aliases.ts      aliases.sh generation from saved agents
 dist/               Compiled JavaScript published to npm (generated, gitignored)
 ```
 
