@@ -39,7 +39,16 @@ test("the default config records a custom path and later commands use it", async
   `;
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
     cwd: process.cwd(),
-    env: { ...process.env, HOME: home, USERPROFILE: home },
+    env: {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      // Clear config-location overrides so the child resolves the same
+      // `$HOME/.config/pi-cli` path asserted below.
+      XDG_CONFIG_HOME: undefined,
+      PI_CLI_CONFIG_DIR: undefined,
+      PI_CLI_CONFIG: undefined,
+    },
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr);
