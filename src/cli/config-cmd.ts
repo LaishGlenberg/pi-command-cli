@@ -1,9 +1,9 @@
-import { configDirectory, initConfigFile } from "../config/file.ts";
-import { CONFIG_FILENAME, defaultConfigDir } from "../constants.ts";
+import { configDir, initConfigFile } from "../config/config-file.ts";
+import { CONFIG_FILENAME } from "../constants.ts";
 
 function printConfigHelp(): void {
   process.stdout.write(`Usage: pi-cli --config\n\n`);
-  process.stdout.write(`Creates the default pi-cli config at ${defaultConfigDir()}.\n`);
+  process.stdout.write(`Creates the default pi-cli config at ${configDir()}.\n`);
 }
 
 /** Handle the small compatibility initializer for the default config file. */
@@ -16,7 +16,7 @@ export function runConfigCommand(path?: string, args: readonly string[] = []): n
     throw new Error(`unknown option for --config: ${arg}`);
   }
 
-  const directory = path || configDirectory();
+  const directory = path || configDir();
   const { path: createdPath, created } = initConfigFile({
     directory,
     filename: CONFIG_FILENAME,

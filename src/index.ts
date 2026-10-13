@@ -1,5 +1,9 @@
 export {
+  ALIASES_FILENAME,
+  ALIASES_MARKER,
+  CONFIG_DIR_NAME,
   CONFIG_FILENAME,
+  CONFIG_PATH_KEY,
   DEFAULT_AGENT_DIR,
   DEFAULT_CONFIG_DIR,
   defaultConfigDir,
@@ -7,31 +11,47 @@ export {
 } from "./constants.ts";
 export { resolveExtension } from "./resolve/extensions.ts";
 export { resolveSkill } from "./resolve/skills.ts";
+export { saveConfig, loadConfig, loadConfigListing, loadCustomFixtures } from "./config/config.ts";
 export {
-  externalConfigPath,
-  loadConfig,
-  loadCustomFixtures,
-  resolveConfigStore,
-  saveConfig,
-  setConfigPath,
-  defaultConfigPath,
-} from "./config/config.ts";
-export {
-  configDirectory,
-  CONFIG_DIRECTORY_NAME,
-  CONFIG_FILENAMES,
-  DEFAULT_CONFIG_FILENAME,
+  configDir,
   configPath,
-  findConfigPath,
+  defaultConfigPath,
+  externalConfigPath,
   initConfigFile,
-  parseConfigContent,
-  serializeConfigContent,
-} from "./config/file.ts";
-export { parseArguments, buildPiArguments, shellSplit } from "./cli/arguments.ts";
+  isRecord,
+  readConfigFile,
+  resolveConfigReference,
+  resolveConfigStore,
+  setConfigPath,
+  writeConfigFile,
+  writeFileAtomic,
+} from "./config/config-file.ts";
+export {
+  aliasesPath,
+  formatAliasWarnings,
+  formatAliases,
+  isShellBuiltin,
+  isValidAliasName,
+  writeAliases,
+} from "./config/aliases.ts";
+export { parseArguments, buildPiArguments, shellQuote, shellSplit } from "./cli/arguments.ts";
+export {
+  appendAliasImport,
+  buildAliasImport,
+  detectShell,
+  hasAliasImport,
+  resolveRcFile,
+  runAddAliases,
+  shellPath,
+} from "./cli/add-aliases.ts";
 export { resolveCustomExpression } from "./cli/custom.ts";
+export { formatConfigListing, printConfigListing, supportsColor } from "./cli/list.ts";
 export { main } from "./cli/main.ts";
 
 export type { ParsedArguments } from "./cli/arguments.ts";
 export type { CustomFixtures } from "./cli/custom.ts";
-export type { ConfigStore, ConfigStoreKind, PiCliSection } from "./config/config.ts";
-export type { InitConfigOptions, InitConfigResult } from "./config/file.ts";
+export type { ListingFormatOptions } from "./cli/list.ts";
+export type { ConfigFile, ConfigStore, InitConfigOptions, InitConfigResult } from "./config/config-file.ts";
+export type { ConfigListing, SaveConfigResult } from "./config/config.ts";
+export type { FormattedAliases, WrittenAliases } from "./config/aliases.ts";
+export type { AddAliasesOptions, ShellKind } from "./cli/add-aliases.ts";

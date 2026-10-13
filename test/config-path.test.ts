@@ -20,7 +20,7 @@ test("-p is parsed without forwarding it to pi", () => {
 
 test("saving to a path uses one JSON config file", async () => {
   const directory = await temporaryDirectory();
-  const path = saveConfig("reviewer", "pi-cli --model fast", directory);
+  const { path } = saveConfig("reviewer", "pi-cli --model fast", directory);
   assert.equal(path, join(directory, "config.json"));
   assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), {
     agents: { reviewer: "pi-cli --model fast" },
@@ -39,7 +39,7 @@ test("the default config records a custom path and later commands use it", async
   `;
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
     cwd: process.cwd(),
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: home, USERPROFILE: home },
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr);

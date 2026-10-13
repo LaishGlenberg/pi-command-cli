@@ -1,27 +1,26 @@
 import { spawn, type SpawnOptions } from "node:child_process";
 
+import { formatAliasWarnings } from "../config/aliases.ts";
 import {
   buildPiArguments,
   mergeParsedArguments,
   parseArguments,
+  shellQuote,
   stripPathFlag,
   stripSaveFlag,
   type ParsedArguments,
 } from "./arguments.ts";
-import {
-  loadConfig,
-  loadCustomFixtures,
-  saveConfig,
-  setConfigPath,
-} from "../config/config.ts";
+import { runAddAliases } from "./add-aliases.ts";
+import { loadConfig, loadCustomFixtures, saveConfig } from "../config/config.ts";
+import { setConfigPath } from "../config/config-file.ts";
 import { runConfigCommand } from "./config-cmd.ts";
 import { printHelp } from "./help.ts";
+import { printConfigListing } from "./list.ts";
 import { printHelpi } from "./pi-help-msg.ts";
 
-export function shellQuote(argument: string): string {
-  if (/^[a-zA-Z0-9_./:@%+=,-]+$/.test(argument)) return argument;
-  return `'${argument.replaceAll("'", "'\\''")}'`;
-}
+// Re-exported for callers importing it from `cli/main.ts`; the implementation
+// lives in `arguments.ts` alongside its inverse `shellSplit`.
+export { shellQuote } from "./arguments.ts";
 
 /**
  * Quote a single argument for a `cmd.exe /c` command line. The target process
@@ -67,6 +66,7 @@ export function buildSpawnSpec(
   };
 }
 
+/** Find an explicit `-p`/`--path` directory before parsing, for lazy fixtures. */
 function requestedConfigPath(argv: readonly string[]): string | undefined {
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -94,6 +94,26 @@ export function main(argv: string[] = process.argv.slice(2)): number | undefined
       return 0;
     }
 
+    if (parsed.list) {
+      printConfigListing(parsed.configPath);
+      return 0;
+    }
+
+    if (parsed.addAliases) {
+      // Streaming prompt keeps the process alive; resolve the exit code async.
+      void runAddAliases(parsed.configPath).then(
+        (code) => {
+          process.exitCode = code;
+        },
+        (error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          process.stderr.write(`pi-cli: ${message}\n`);
+          process.exitCode = 1;
+        },
+      );
+      return undefined;
+    }
+
     if (parsed.configMode) {
       if (parsed.configPath) setConfigPath(parsed.configPath);
       return runConfigCommand(parsed.configPath, parsed.piArguments);
@@ -110,9 +130,13 @@ export function main(argv: string[] = process.argv.slice(2)): number | undefined
       if (parsed.configPath) setConfigPath(parsed.configPath);
       const tokens = stripPathFlag(stripSaveFlag(argv));
       const command = ["pi-cli", ...tokens.map(shellQuote)].join(" ");
-      const destination = saveConfig(parsed.saveName, command, parsed.configPath);
+      const { path: destination, skipped, shadowed } = saveConfig(
+        parsed.saveName,
+        command,
+        parsed.configPath,
+      );
+      process.stderr.write(formatAliasWarnings(skipped, shadowed));
       process.stdout.write(`saved config "${parsed.saveName}" to ${destination}\n`);
-      process.stdout.write(`run pi-cli --path ${shellQuote(parsed.configPath || destination.replace(/[/\\][^/\\]+$/, ""))} to switch config directories\n`);
       return 0;
     }
 

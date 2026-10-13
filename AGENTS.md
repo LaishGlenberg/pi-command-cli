@@ -1,242 +1,130 @@
 # AGENTS.md
 
-Guidance for agents working in `@lglen/pi-command-cli` (`pi-cli`).
-
-## What this project is
-
-A small Node CLI that wraps the `pi` coding agent. Its job is to
-make `pi` startup ergonomic: resolve extension and skill names to absolute paths,
-add the right discovery flags, and save/load named launch configs. It is a
-transparent pass-through for every other `pi` flag.
+Guidance for agents working in `@lglen/pi-command-cli` (`pi-cli`), a
+zero-dependency Node CLI that wraps the `pi` coding agent: it resolves
+extension/skill names to absolute paths, adds the right discovery flags, and
+saves/loads named launch configs. Every other `pi` flag is a transparent
+pass-through.
 
 ## Commands
 
 ```bash
-npm test             # run the test suite (120 tests, node:test) on the .ts sources
+node --test          # test suite (node:test) run directly on the .ts sources
+npm test             # same as above
 npm run typecheck    # tsc --noEmit (tsconfig.json)
 npm run build        # compile to dist/ for publishing (tsconfig.build.json)
-npm link             # expose `pi-cli` locally (the prepare script builds first)
+npm link             # expose `pi-cli` locally (prepare builds first)
 pi-cli --dry-run ... # print the expanded `pi ...` command without spawning
-pi-cli --config      # create ~/.config/pi-cli/config.json
 ```
 
-Written in TypeScript and compiled with `tsc` to `dist/` for publishing; the
-there is no bundler and no runtime dependency for config storage. Node >= 22.18, ESM
-(`"type": "module"`). Tests run the `.ts` sources directly through Node's native
-type stripping and use the built-in `node:test` + `node:assert/strict` only.
-`dist/` is generated and gitignored; `bin`/`main` point at `dist/index.js`. The
-`prepare` script builds `dist/` on `npm install`/`npm link`, so a fresh checkout
-is runnable without a manual build.
+TypeScript compiled by `tsc` to `dist/` (gitignored; `bin`/`main` point at
+`dist/index.js`). No runtime deps, no bundler. Node >= 22.18, ESM. Tests run the
+`.ts` sources via Node's native type stripping. `prepare` builds `dist/`, so a
+fresh checkout needs no manual build.
 
-## Architecture
-
-Entry flow: `index.ts` (bin) → `src/cli/main.ts#main` → `src/cli/arguments.ts`.
+## Layout
 
 ```
-index.ts            Bin entry; runs main() when invoked directly, re-exports public API
-src/
-  index.ts          Barrel re-export of the public API (public surface lives here)
-  constants.ts      Agent and config directories, source extensions
-  cli/
-    main.ts         main() orchestration, shell/Windows quoting, child spawn
-    arguments.ts    stripSaveFlag/merge + parseArguments/buildPiArguments + shellSplit
-    options.ts      Option table (FLAG_OPTIONS/VALUE_OPTIONS) + matchOption + -bt validation
-    config-cmd.ts   `--config` default config initializer
-    custom.ts       --custom access-path lookup and expansion
-    help.ts         `pi-cli --help` text
-    pi-help-msg.ts  `pi-cli --helpi` text (pi's own help; keep roughly in sync with pi)
-  resolve/
-    walk.ts         Recursive directory walker (skips node_modules/.git, symlink-safe)
-    packages.ts     package.json parsing and "is this a pi extension dir" checks
-    matching.ts     Path canonicalization and name-matching helpers
-    extensions.ts   Extension name → path resolution
-    skills.ts       Skill name → path resolution
-  config/
-    file.ts         Default JSON config path and parsing
-    io.ts           Atomic, permissioned file writes
-    config.ts       Config path selection + saved configs + custom fixtures
-test/index.test.ts  All tests
-dist/               `tsc` output (generated, gitignored) that npm publishes
-
-graphify-out/        Committed knowledge graph of this repo (see below)
+index.ts            Bin entry; runs main(), re-exports public API
+src/index.ts        Barrel re-export of the public API (add exports here only)
+src/constants.ts    Agent dir, config dir/file names, alias names, built-in tools
+src/cli/            main, arguments/options, list, add-aliases, config-cmd, custom, help
+src/resolve/        extension/skill name -> path (walk, packages, matching)
+src/config/         config-file (paths/IO) + config (save/load) + aliases
+test/index.test.ts        Most tests
+test/config-path.test.ts  Config path/store and `--path` coverage
+test/npm-install.test.ts  Pack/install integration test
 ```
 
-### Core flow
+Entry flow: `index.ts` -> `src/cli/main.ts#main` -> `src/cli/arguments.ts`.
 
-1. `parseArguments(argv, custom)` walks argv left to right. pi-cli's own flags
-   are declared in one option table (`FLAG_OPTIONS` / `VALUE_OPTIONS` in
-   (`options.ts`) and matched by `matchOption`, which understands detached
-   (`--flag value`), equals (`--flag=value`), and attached short (`-fvalue`,
-   `-f=value`) spellings. The handled flags are `-e`, `-s`,
-   `-bt`/`--built-in-tools`, `-cu`/`--custom`, `-i`/`--import`, `-S`/`--save`,
-   `-n`/`--nothing`, `--no-defaults`, `--dry-run`, and help; everything else is
-   pushed untouched into `piArguments`. `-e`/`-s` normalize to
-   `--extension <value>` / `--skill <value>` pairs. `custom` is either a
-   fixtures object or a lazy `() => fixtures` loader.
-2. `buildPiArguments(parsed, agentDir)` resolves every `--extension`/`--skill`
-   value through `resolveExtension`/`resolveSkill`, then prepends discovery
-   flags: `-ne` if any extension was named, `-ns` if any skill was named.
-3. `main()` optionally loads/merges a saved config, builds the argument list,
-   and either prints it (`--dry-run`) or spawns `pi` (or `$PI_BIN`).
+## Behavior invariants
 
-### Discovery-flag invariant (important)
+**Discovery flags** - naming a resource disables discovery for that type only:
+`-e` adds `-ne`, `-s` adds `-ns`, neither adds nothing, `-n`/`--nothing` emits
+explicit `-ne -ns -nc -np` with `useDefaults = false`. Do not add `-nbt` or other
+tool flags here.
 
-Naming a resource disables discovery for *that resource type only*:
+**`-bt`/`--built-in-tools`** keeps only the named built-ins by emitting
+`--exclude-tools <BUILTIN_TOOLS minus allowlist>`. Never use `--tools`/`-t`
+(strict allowlist across built-in/extension/custom tools; would disable the
+extension tools `-e` loads). User-typed `--tools`/`-t` pass through unchanged.
+Note `--exclude-tools` only removes; Pi's default built-ins are `read, bash,
+edit, write`, so `grep`/`find`/`ls` need Pi's `settings.json` `defaultTools`
+first.
 
-- any `-e` → add `-ne` (extensions discovery off; skills still load)
-- any `-s` → add `-ns` (skills discovery off; extensions still load)
-- no `-e`/`-s` → add nothing; pi-cli is a transparent pass-through
-- `-n`/`--nothing` → explicit `-ne -ns -nc -np`, and `useDefaults = false` so no
-  flags are auto-added on top
+**`--custom`** takes one argv element whose tokens may be JS-style access paths
+(e.g. `sys_prompts[0]`, `opts.nested['x']`) into the config's top-level `custom`
+map. `parseArguments` expands it, splices the result into the token stream, and
+re-parses it as if typed on the CLI - so pi-cli flags inside `--custom` are
+honored. Strings substitute as-is, arrays spread, other values JSON-serialize;
+unresolved tokens pass through; an expression resolving nothing throws. After
+`--`, arguments are literal and forwarded to pi.
 
-Do not "helpfully" add `-nbt` or other tool flags here.
+**`-p`/`--path` and `--config`** - `-p <directory>` selects a config directory
+and records it as top-level `path` in the default config, so later commands use
+it; `--config` creates the default config file and exits.
 
-`-bt`/`--built-in-tools` is the one tool flag pi-cli manages. It keeps only the
-named built-ins by emitting `--exclude-tools <BUILTIN_TOOLS minus allowlist>`.
-It must **not** use `--tools`/`-t`: that is a strict allowlist across built-in,
-extension, and custom tools and would disable the very extension tools `-e`
-loads. `--tools`/`-t` typed by the user are still passed through unchanged.
-Caveat to preserve: `--exclude-tools` only removes; Pi's default built-ins are
-`read, bash, edit, write`, so `grep`/`find`/`ls` must be enabled via the
-`defaultTools` setting before `-bt` can keep them.
+**`-ls`/`--list` and `-aa`/`--add-aliases`** - `--list` prints saved agents and
+custom fixtures (tolerating a missing file); `--add-aliases` regenerates
+`aliases.sh` next to the config and offers to import it from the rc file.
 
-### Custom fixtures (`--custom`)
-
-The active config file's `custom` key holds arbitrary JSON. `-cu`/`--custom` takes one argv element
-containing an argument list in which any token may be a JavaScript-style access
-path (e.g. `sys_prompts[0]`, `opts.nested['x']`) into `custom`.
-`parseArguments` expands it against the fixtures, **splices the result into the
-token stream, and re-parses it as if typed on the command line** — so pi-cli
-flags inside a `--custom` expression (`-e`, `-s`, `-bt`, nested `--custom`, …)
-are honored, including the discovery flags they imply. Strings substitute as-is,
-arrays spread into separate args, other values are JSON-serialized; multiple
-references are allowed, unresolved tokens pass through, and an expression that
-resolves nothing throws. `buildPiArguments` no longer handles `--custom`; after
-`--` the wrapper is a literal argument forwarded to pi.
-
-### Saved config storage
-
-pi-cli uses `~/.config/pi-cli/config.json` by default. It never reads or writes
-Pi's `settings.json` and does not use the extension directory. The JSON file
-contains `agents` (saved command strings) and optional `custom` fixtures.
-
-`-p`/`--path <directory>` switches to another config directory and records its
-absolute path in the default config's `path` key. The default file therefore
-remains the source of truth for the active directory. Stored command strings
-are tokenized with `shellSplit` (quote-aware) so quoted `--custom` values
-round-trip.
-
-The default directory is resolved lazily by `defaultConfigDir()` in
-`constants.ts`, and `PI_CLI_CONFIG_DIR` overrides it. `loadConfig` throws
-`config file not found: <path>` when the active file is absent (for example a
-stale `path` entry), rather than reporting an empty store.
+**Config** lives at `~/.config/pi-cli/config.json`, a single JSON store separate
+from Pi's `settings.json` (never touch it; no settings.json fallback). The
+directory honors `$PI_CLI_CONFIG_DIR`, then `$XDG_CONFIG_HOME` (falling back to
+`~/.config`); `$PI_CLI_CONFIG` overrides the whole file path. Saved commands live
+under top-level `agents.<name>`; top-level `custom` is reserved and must be
+preserved; top-level `path` records the `--path` directory. `loadConfig` on a
+missing file throws `config file not found: <path>`; `loadCustomFixtures`,
+`loadConfigListing`, and `--list` tolerate a missing file. Write atomically (temp
++ rename) with `0600`, preserving unrelated keys. Stored command strings are
+tokenized with `shellSplit` (quote-aware) so a quoted `--custom` value
+round-trips. Saving regenerates `aliases.sh` alongside the config.
 
 ## Conventions
 
-- Plain ESM, named exports, no classes, and minimal external dependencies. Prefer small pure
-  functions so they can be unit-tested directly.
-- TypeScript is compiled but the `.ts` sources are also run directly by Node, so
-  keep syntax erasable (`tsconfig.json` sets `erasableSyntaxOnly`): no `enum`,
-  `namespace`, or parameter properties. Relative imports use explicit `.ts`
-  specifiers; `rewriteRelativeImportExtensions` rewrites them to `.js` in
-  `dist/`.
-- Errors: throw `Error` with a lowercase, actionable message that includes the
-  searched locations or the ambiguity list. `main()` catches and prints
-  `pi-cli: <message>` to stderr, returning exit code 1.
-- Resolution must stay deterministic: return an explicit path if it exists,
-  otherwise search, and on 0 or >1 matches throw rather than guess.
-- Add public API to `src/index.ts` only; `index.ts` re-exports it with
-  `export *`, so the two lists cannot drift.
-- Windows matters: never spawn a `.cmd` directly. Route through
+- Plain ESM, named exports, no classes, no external deps. Prefer small pure
+  functions for direct unit testing.
+- Keep syntax erasable (`erasableSyntaxOnly`): no `enum`, `namespace`, or
+  parameter properties. Relative imports use explicit `.ts` specifiers
+  (`rewriteRelativeImportExtensions` rewrites them to `.js` in `dist/`).
+- Errors: throw `Error` with a lowercase, actionable message including searched
+  locations or the ambiguity list. `main()` prints `pi-cli: <message>` to stderr
+  and returns exit code 1.
+- Resolution stays deterministic: return an explicit path if it exists,
+  otherwise search; on 0 or >1 matches throw rather than guess.
+- Add public API to `src/index.ts` only (it re-exports with `export *`).
+- Windows: never spawn a `.cmd` directly. Go through
   `buildSpawnSpec`/`windowsQuote` (cmd.exe `/d /s /c`) and keep the
   `windowsVerbatimArguments` option.
-- The `build` script marks `dist/index.js` executable: `tsc` emits it `0644`,
-  but a globally linked `pi-cli` runs the file through its shebang and needs
-  `+x`. A bare `tsc` run that skips this step will make the linked bin fail
-  with "Permission denied".
-- pi-cli owns only its JSON config files under `~/.config/pi-cli` (or the
-  selected `--path` directory). Write atomically (temp + rename) with `0600`.
-
-## Releasing
-
-Releases are cut entirely in CI by `.github/workflows/release.yml`, which runs
-on every push to `main`:
-
-- If the tag for `package.json`'s version (`vX.Y.Z`) already exists, the
-  workflow bumps the patch version, commits it back to `main` as
-  `chore(release): vX.Y.Z [skip ci]`, and tags that commit.
-- Otherwise (the version has no tag yet - the first release, or a deliberate
-  minor/major bump merged in a PR) that version is released as-is.
-
-The tag is created in GitHub on a commit that is actually on `main`; never push
-`v*` tags by hand. There is no `npm publish` step (npm disallows publishing via
-`GITHUB_TOKEN`), so publishing stays manual. The version decision is a pure
-function in `scripts/release-version.ts`, unit-tested in
-`test/release-version.test.ts`, so the workflow logic stays testable. A bump
-commit is pushed with `GITHUB_TOKEN`, which does not retrigger workflows, so
-the workflow cannot loop on its own commit.
-
-## Knowledge graph (graphify)
-
-`graphify-out/` is a checked-in knowledge graph of this repo, built with the
-`graphify` skill (`~/.pi/agent/skills/graphify/SKILL.md`, binary at
-`~/.local/bin/graphify`). It is not build output to ignore — treat it as a
-committed artifact.
-
-- **Query before grepping.** For architecture questions ("what calls X",
-  "how does resolution flow"), use the graph first: the `graphify` skill, or
-  `graphify query "<question>"` / `graphify god-nodes`.
-- **Scope with `.graphifyignore`.** The repo-root `.graphifyignore` (gitignore
-  syntax, applied on top of `.gitignore`) currently excludes `test/` and `*.md`
-  so the graph stays code-only and `graphify update` needs no LLM. Edit it to
-  change what is graphed, then rerun `graphify update .` to apply.
-- **Refresh after meaningful changes.** Run the graphify skill with `--update`
-  (e.g. `/graphify . --update`) after adding/moving files or changing module
-  structure, then commit the regenerated artifacts. Pure code changes are
-  re-extracted via AST with no LLM; doc/README changes also refresh semantic
-  nodes.
-- **Pending refresh:** the TypeScript migration renamed every source file from
-  `.js` to `.ts`; run `graphify update .` and commit the regenerated artifacts
-  when convenient (intentionally deferred during the migration).
-- **Tracked:** `graph.json`, `GRAPH_REPORT.md`, `graph.html`, `manifest.json`,
-  `.graphify_labels.json`.
-- **Ignored (machine-specific):** `cache/`, `memory/`, `reflections/`,
-  `cost.json`, `.vocab.txt`, `.graphify_python`, `.graphify_root`,
-  `.graphify_labels.json.sig`, dated pre-overwrite snapshots
-  (`graphify-out/YYYY-MM-DD/`), and `.graphify_learning.json`. Never commit these.
-- The generated `GRAPH_REPORT.md` (and its "surprising connections" /
-  suggested-questions heuristics) is not actively maintained; prefer querying
-  `graph.json`. Use `graphify update .` for the no-LLM code re-extraction.
-- `manifest.json` stores per-file `ast_hash`/`semantic_hash` used for
-  incremental updates. Don't hand-edit it or the graph; regenerate instead.
+- The `build` script marks `dist/index.js` executable (`+x`); a bare `tsc` run
+  skips this and the linked bin then fails with "Permission denied".
 
 ## Testing
 
-- Add tests to `test/index.test.ts`. Use the `fixture()` helper to build a fake
-  agent dir (npm/git/extensions/skills trees) and `withEnv` to set
-  `PI_AGENT_DIR` / `PI_BIN`. The suite sets `PI_CLI_CONFIG_DIR` to a throwaway
-  directory at the top of `test/index.test.ts`, so `--path` (which persists the
-  active directory into the default config) can never clobber a real
-  `~/.config/pi-cli/config.json`. To exercise config paths, use a temporary
-  directory as the explicit `saveConfig`/`loadConfig` path or pass it with
-  `--path`.
-- Prefer asserting on `parseArguments` output and `buildPiArguments` output
-  rather than spawning pi. `parseArguments(argv, custom)` takes fixture data (or
-  a loader) for `--custom` tests. `main()` tests capture
-  stdout/stderr and set env. For `buildPiArguments`-only tests, use the
-  `parsedArgs()` helper instead of hand-writing every `ParsedArguments` field.
-- `test/npm-install.test.ts` is an integration test: it runs `npm pack` (which
-  builds `dist/` via `prepack`), installs the tarball into a throwaway global
-  prefix, and runs the installed `pi-cli` bin. It is the check that the compiled
-  artifact actually ships. Keep it in sync when `files`, `bin`, `main`, or the
-  entry point change. It skips when npm is missing; installing the tarball
-  fetches the package dependencies from the registry unless they are already in
-  the npm cache.
-- Run `node --test` and `npm run typecheck` before finishing; the suite is fast
-  and must stay green.
+- Tests live in `test/index.test.ts` (plus `test/config-path.test.ts` for config
+  path resolution). Use `fixture()` for a fake agent dir and `withEnv` to set
+  `PI_AGENT_DIR`/`PI_BIN`/`PI_CLI_CONFIG`; `index.test.ts` also sets a
+  process-wide `PI_CLI_CONFIG_DIR`. Always point the config at a temp location;
+  never touch the real config.
+- Prefer asserting on `parseArguments`/`buildPiArguments` output over spawning
+  pi. Use the `parsedArgs()` helper for `buildPiArguments`-only tests.
+- `test/npm-install.test.ts` runs `npm pack` (builds `dist/` via `prepack`),
+  installs the tarball into a throwaway global prefix, and runs the installed
+  bin. Update it when `files`, `bin`, `main`, or the entry point change. It
+  skips without npm and needs no network.
+- Run `node --test` and `npm run typecheck` before finishing; keep both green.
 
-## Documentation
+## Docs
 
-Update `README.md` whenever user-facing behavior changes (flags, expansion
-rules, config format, supported platforms). Keep `src/cli/help.ts` in sync with the
-actual options, and add a usage example for any new flag.
+Update `README.md` for user-facing changes (flags, expansion rules, config
+format, platforms) and keep `src/cli/help.ts` in sync, with a usage example for
+any new flag.
+
+## Releasing
+
+CI (`.github/workflows/release.yml`) releases on every push to `main`: if the
+tag for `package.json`'s version already exists it bumps the patch and commits
+`chore(release): vX.Y.Z [skip ci]`, otherwise it tags the current version. The
+version decision is the pure, tested `scripts/release-version.ts`. Never push
+`v*` tags by hand. There is no `npm publish` step (publishing is manual).

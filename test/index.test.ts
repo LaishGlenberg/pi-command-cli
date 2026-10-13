@@ -1,22 +1,37 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
+  aliasesPath,
+  appendAliasImport,
+  buildAliasImport,
   buildPiArguments,
+  configDir,
+  configPath,
   defaultConfigPath,
+  detectShell,
+  formatAliases,
+  formatAliasWarnings,
+  formatConfigListing,
+  hasAliasImport,
+  isShellBuiltin,
   loadConfig,
+  loadConfigListing,
   loadCustomFixtures,
   main,
   parseArguments,
   resolveCustomExpression,
   resolveExtension,
+  resolveRcFile,
   resolveSkill,
+  runAddAliases,
   saveConfig,
   shellSplit,
+  writeAliases,
   type ParsedArguments,
 } from "../index.ts";
 import { buildSpawnSpec, windowsQuote } from "../src/cli/main.ts";
@@ -80,7 +95,10 @@ function withEnv<T>(overrides: NodeJS.ProcessEnv, fn: () => T): T {
   const original: NodeJS.ProcessEnv = {};
   for (const key of Object.keys(overrides)) {
     original[key] = process.env[key];
-    process.env[key] = overrides[key];
+    const value = overrides[key];
+    // An explicit `undefined` unsets the variable for the callback.
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
   }
   try {
     return fn();
@@ -643,8 +661,26 @@ test("buildPiArguments does not add defaults when useDefaults is false", () => {
 });
 
 // ---------------------------------------------------------------------------
-// config paths
+// saveConfig / loadConfig (using ~/.config/pi-cli/config.json)
 // ---------------------------------------------------------------------------
+
+test("saveConfig writes command strings to config.json under agents", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+
+  saveConfig("a1", "pi-cli -e pi-intercom,rtk -s playwright-cli", configFile);
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.agents["a1"], "pi-cli -e pi-intercom,rtk -s playwright-cli");
+});
+
+test("saveConfig creates config.json if it does not exist", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+
+  saveConfig("x", "pi-cli --model google/gemini", configFile);
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.agents["x"], "pi-cli --model google/gemini");
+});
 
 test("saveConfig writes the active JSON config", async () => {
   const directory = await fixture();
@@ -655,37 +691,272 @@ test("saveConfig writes the active JSON config", async () => {
   assert.equal(existsSync(join(directory, "settings.json")), false);
 });
 
-test("loadConfig reads a saved command and custom fixtures", async () => {
-  const directory = await fixture();
-  await writeFile(join(directory, "config.json"), JSON.stringify({
-    custom: { sys: ["hi"] },
-    agents: { reviewer: "pi-cli --custom '--system-prompt sys[0]'" },
-  }));
-  const loaded = loadConfig("reviewer", directory);
-  assert.deepEqual(loaded.piArguments, ["--system-prompt", "hi"]);
-  assert.deepEqual(loadCustomFixtures(directory), { sys: ["hi"] });
+test("saveConfig preserves unrelated config keys and custom fixtures", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: { sys: ["hi"] }, future: true }));
+
+  saveConfig("x", "pi-cli -e pi-intercom", configFile);
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.deepEqual(config.custom, { sys: ["hi"] });
+  assert.equal(config.future, true);
+  assert.equal(config.agents["x"], "pi-cli -e pi-intercom");
 });
 
-test("switching config directories records the path in the default config", async () => {
-  const directory = await fixture();
-  const parsed = parseArguments(["--path", directory, "--import", "reviewer"]);
-  assert.equal(parsed.configPath, directory);
-  assert.equal(parsed.importName, "reviewer");
+// Windows exposes no owner/group/other bits, so `0o600` cannot be observed.
+test(
+  "saveConfig writes the config file with owner-only permissions",
+  { skip: process.platform === "win32" },
+  async () => {
+    const agentDir = await fixture();
+    const configFile = join(agentDir, "config.json");
+
+    saveConfig("x", "pi-cli -e pi-intercom", configFile);
+    assert.equal((await stat(configFile)).mode & 0o777, 0o600);
+  },
+);
+
+test("saveConfig rejects invalid config names", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  for (const bad of [".", "..", "a/b", "a\\b", "a\0b"]) {
+    assert.throws(() => saveConfig(bad, "pi-cli", configFile), {
+      message: "config name must be non-empty and cannot contain path separators",
+    });
+  }
 });
 
-test("defaultConfigPath honors PI_CLI_CONFIG_DIR", () => {
-  assert.equal(defaultConfigPath(), join(process.env.PI_CLI_CONFIG_DIR ?? "", "config.json"));
+test("loadConfig finds an exact match and re-parses the command", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  saveConfig("a1", "pi-cli -e pi-intercom -s playwright-cli", configFile);
+
+  const loaded = loadConfig("a1", configFile);
+  assert.deepEqual(loaded.piArguments, ["--extension", "pi-intercom", "--skill", "playwright-cli"]);
+  assert.equal(loaded.hasExtension, true);
+  assert.equal(loaded.hasSkill, true);
+});
+
+test("loadConfig finds a unique partial match (case-insensitive)", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  saveConfig("searcher", "pi-cli -e pi-intercom", configFile);
+
+  const loaded = loadConfig("search", configFile);
+  assert.deepEqual(loaded.piArguments, ["--extension", "pi-intercom"]);
+});
+
+test("loadConfig throws when no config matches", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  saveConfig("a1", "pi-cli -e pi-intercom", configFile);
+
+  assert.throws(() => loadConfig("nonexistent", configFile), {
+    message: /saved config not found: nonexistent/,
+  });
+});
+
+test("loadConfig throws when the search is ambiguous", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  saveConfig("alpha-ext", "pi-cli -e pi-intercom", configFile);
+  saveConfig("alpha-skill", "pi-cli -s playwright-cli", configFile);
+
+  assert.throws(() => loadConfig("alpha", configFile), {
+    message: /saved config search is ambiguous: alpha/,
+  });
+});
+
+test("loadConfig returns exact match even when partial would also match", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  saveConfig("beta", "pi-cli -e pi-intercom", configFile);
+  saveConfig("beta-extended", "pi-cli -s playwright-cli", configFile);
+
+  const loaded = loadConfig("beta", configFile);
+  assert.deepEqual(loaded.piArguments, ["--extension", "pi-intercom"]);
+});
+
+test("loadConfig throws on a non-string command value", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ agents: { broken: 42 } }));
+
+  assert.throws(() => loadConfig("broken", configFile), {
+    message: /invalid saved config: broken/,
+  });
+});
+
+test("loadConfig throws on a malformed config file", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, "not json{{{");
+
+  assert.throws(() => loadConfig("anything", configFile), {
+    message: /could not read config file/,
+  });
+});
+
+test("loadConfig throws when config.json has no agents map", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: { sys: ["hi"] } }));
+
+  assert.throws(() => loadConfig("anything", configFile), {
+    message: /no saved configs found/,
+  });
+});
+
+test("loadConfig throws when the config file is missing", async () => {
+  const agentDir = await fixture();
+
+  assert.throws(() => loadConfig("anything", join(agentDir, "missing.json")), {
+    message: /config file not found: /,
+  });
 });
 
 test("loadConfig reports a missing config file clearly", async () => {
   const directory = await fixture();
   const missing = join(directory, "no-config-here");
   assert.throws(() => loadConfig("reviewer", missing), {
-    message: /config file not found: .*no-config-here/, });
+    message: /config file not found: .*no-config-here/,
+  });
+});
+
+test("loadConfig does not treat top-level keys as legacy configs", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ legacy: "pi-cli -e pi-intercom" }));
+
+  assert.throws(() => loadConfig("legacy", configFile), {
+    message: /no saved configs found/,
+  });
 });
 
 // ---------------------------------------------------------------------------
-// custom fixtures (--custom / piCli.custom)
+// config path resolution and loading
+// ---------------------------------------------------------------------------
+
+test("configPath honors PI_CLI_CONFIG", () => {
+  withEnv({ PI_CLI_CONFIG: "/tmp/custom-pi-cli.json" }, () => {
+    assert.equal(configPath(), "/tmp/custom-pi-cli.json");
+  });
+});
+
+test("configPath defaults to $XDG_CONFIG_HOME/pi-cli/config.json", () => {
+  withEnv(
+    { PI_CLI_CONFIG: undefined, PI_CLI_CONFIG_DIR: undefined, XDG_CONFIG_HOME: "/tmp/xdg-config" },
+    () => {
+      assert.equal(configPath(), join("/tmp/xdg-config", "pi-cli", "config.json"));
+    },
+  );
+});
+
+test("configDir falls back to ~/.config when XDG_CONFIG_HOME is empty", () => {
+  withEnv({ PI_CLI_CONFIG_DIR: undefined, XDG_CONFIG_HOME: "" }, () => {
+    assert.equal(configDir().endsWith(join(".config", "pi-cli")), true);
+  });
+});
+
+test("defaultConfigPath honors PI_CLI_CONFIG_DIR", () => {
+  withEnv(
+    { PI_CLI_CONFIG: undefined, PI_CLI_CONFIG_DIR: "/tmp/pi-cli-config-dir" },
+    () => {
+      assert.equal(defaultConfigPath(), join("/tmp/pi-cli-config-dir", "config.json"));
+    },
+  );
+});
+
+test("loadCustomFixtures reads top-level custom fixtures", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: { sys: ["hi"] } }));
+
+  assert.deepEqual(loadCustomFixtures(configFile), { sys: ["hi"] });
+});
+
+test("loadCustomFixtures returns an empty object for a missing file", async () => {
+  const agentDir = await fixture();
+  assert.deepEqual(loadCustomFixtures(join(agentDir, "missing.json")), {});
+});
+
+test("loadCustomFixtures ignores a non-object custom value", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: ["nope"] }));
+
+  assert.deepEqual(loadCustomFixtures(configFile), {});
+});
+
+// ---------------------------------------------------------------------------
+// --list / config listing
+// ---------------------------------------------------------------------------
+
+test("--list and -ls set the list flag", () => {
+  assert.equal(parseArguments(["--list"]).list, true);
+  assert.equal(parseArguments(["-ls"]).list, true);
+});
+
+test("formatConfigListing prints the config path above the sections", () => {
+  assert.equal(
+    formatConfigListing(
+      { agents: { quick: "pi-cli" }, custom: {} },
+      { configPath: "/tmp/pi-cli/config.json" },
+    ),
+    "config path: /tmp/pi-cli/config.json\n\nAgents:\n  quick: pi-cli\n\nCustom:\n  (none)",
+  );
+});
+
+test("formatConfigListing paints keys yellow and separates the sections", () => {
+  const out = formatConfigListing(
+    { agents: { searcher: "pi-cli -e pi-intercom" }, custom: { sys_prompts: ["hi"] } },
+    { color: true },
+  );
+  assert.equal(
+    out,
+    "Agents:\n  \x1b[33msearcher\x1b[0m: pi-cli -e pi-intercom\n\n" +
+      'Custom:\n  \x1b[33msys_prompts\x1b[0m: ["hi"]',
+  );
+});
+
+test("formatConfigListing is plain without color and marks empty sections", () => {
+  assert.equal(formatConfigListing({ agents: {}, custom: {} }), "Agents:\n  (none)\n\nCustom:\n  (none)");
+  assert.equal(
+    formatConfigListing({ agents: { quick: "pi-cli" }, custom: {} }),
+    "Agents:\n  quick: pi-cli\n\nCustom:\n  (none)",
+  );
+});
+
+test("formatConfigListing serializes non-string values as JSON", () => {
+  assert.equal(
+    formatConfigListing({
+      agents: { weird: 42 },
+      custom: { cheap_model: ["--model", "google/gemini"], opts: { temperature: 0.2 } },
+    }),
+    "Agents:\n  weird: 42\n\n" +
+      'Custom:\n  cheap_model: ["--model","google/gemini"]\n  opts: {"temperature":0.2}',
+  );
+});
+
+test("loadConfigListing reads agents and custom and tolerates missing keys", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(
+    configFile,
+    JSON.stringify({ agents: { reviewer: "pi-cli" }, custom: { sys: ["hi"] } }),
+  );
+  assert.deepEqual(loadConfigListing(configFile), {
+    agents: { reviewer: "pi-cli" },
+    custom: { sys: ["hi"] },
+  });
+  assert.deepEqual(loadConfigListing(join(agentDir, "missing.json")), {
+    agents: {},
+    custom: {},
+  });
+});
+
+// ---------------------------------------------------------------------------
+// custom fixtures (--custom / config.json custom)
 // ---------------------------------------------------------------------------
 
 test("--custom expands inline and the wrapper is removed", () => {
@@ -776,6 +1047,54 @@ test("resolveCustomExpression substitutes multiple references", () => {
   );
 });
 
+test("--custom concatenates comma-joined fixture references", () => {
+  const custom = {
+    ext_lists: ["pi-parse-commands,pi-intercom", "pi-herdr,pi-mcp-adapter"],
+  };
+  const parsed = parseArguments(["--custom", "-e ext_lists[0],ext_lists[1]"], custom);
+  assert.deepEqual(parsed.piArguments, [
+    "--extension",
+    "pi-parse-commands",
+    "--extension",
+    "pi-intercom",
+    "--extension",
+    "pi-herdr",
+    "--extension",
+    "pi-mcp-adapter",
+  ]);
+  assert.equal(parsed.hasExtension, true);
+});
+
+test("resolveCustomExpression flattens array fixtures when concatenating", () => {
+  const custom = { ext_lists: [["a", "b"], ["c"]] };
+  assert.deepEqual(resolveCustomExpression("-e ext_lists[0],ext_lists[1]", custom), [
+    "-e",
+    "a,b,c",
+  ]);
+});
+
+test("resolveCustomExpression throws when a concatenated reference is missing", () => {
+  const custom = { ext_lists: ["a,b"] };
+  assert.throws(() => resolveCustomExpression("-e ext_lists[0],nope", custom), {
+    message: "custom fixture not found: nope",
+  });
+});
+
+test("resolveCustomExpression leaves literal comma tokens untouched", () => {
+  const custom = { ext: "pi-intercom" };
+  assert.deepEqual(resolveCustomExpression("-e ext --exclude-tools grep,ls", custom), [
+    "-e",
+    "pi-intercom",
+    "--exclude-tools",
+    "grep,ls",
+  ]);
+});
+
+test("resolveCustomExpression keeps a comma inside a bracketed key", () => {
+  const custom = { opts: { "a,b": "value" } };
+  assert.deepEqual(resolveCustomExpression("opts['a,b']", custom), ["value"]);
+});
+
 test("resolveCustomExpression throws when the fixture is missing", () => {
   assert.throws(() => resolveCustomExpression("--system-prompt nope[0]", {}), {
     message: /custom fixture not found: --system-prompt nope\[0\]/,
@@ -806,6 +1125,51 @@ test("parseArguments expands --custom and buildPiArguments resolves the result",
     "--system-prompt",
     "hello world",
   ]);
+});
+
+test("saveConfig nests commands under agents and preserves custom", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: { sys: ["hi"] }, future: true }));
+
+  saveConfig("reviewer", "pi-cli -e pi-intercom", configFile);
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.future, true);
+  assert.deepEqual(config.custom, { sys: ["hi"] });
+  assert.equal(config.agents.reviewer, "pi-cli -e pi-intercom");
+});
+
+test("loadConfig reads a saved command and custom fixtures", async () => {
+  const directory = await fixture();
+  await writeFile(join(directory, "config.json"), JSON.stringify({
+    custom: { sys: ["hi"] },
+    agents: { reviewer: "pi-cli --custom '--system-prompt sys[0]'" },
+  }));
+  const loaded = loadConfig("reviewer", directory);
+  assert.deepEqual(loaded.piArguments, ["--system-prompt", "hi"]);
+  assert.deepEqual(loadCustomFixtures(directory), { sys: ["hi"] });
+});
+
+test("switching config directories records the path in the default config", async () => {
+  const directory = await fixture();
+  const parsed = parseArguments(["--path", directory, "--import", "reviewer"]);
+  assert.equal(parsed.configPath, directory);
+  assert.equal(parsed.importName, "reviewer");
+});
+
+test("loadConfig reads agents and expands quoted custom expressions", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(
+    configFile,
+    JSON.stringify({
+      custom: { sys: ["hi"] },
+      agents: { reviewer: "pi-cli --custom '--system-prompt sys[0]'" },
+    }),
+  );
+
+  const loaded = loadConfig("reviewer", configFile);
+  assert.deepEqual(loaded.piArguments, ["--system-prompt", "hi"]);
 });
 
 test("saved custom fixtures round-trip through an explicit config path", async () => {
@@ -839,6 +1203,31 @@ test("main expands custom fixtures from an explicit config path on --dry-run", a
   assert.equal(output, "pi --system-prompt 'hello world'\n");
 });
 
+test("main expands --custom fixtures from config.json on --dry-run", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: { sys: ["hello world"] } }));
+
+  const originalWrite = process.stdout.write;
+  let output = "";
+  process.stdout.write = (chunk) => {
+    output += chunk;
+    return true;
+  };
+  let result;
+  try {
+    result = withEnv(
+      { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: configFile },
+      () => main(["--custom", "--system-prompt sys[0]", "--dry-run"]),
+    );
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  assert.equal(result, 0);
+  assert.equal(output, "pi --system-prompt 'hello world'\n");
+});
+
 // ---------------------------------------------------------------------------
 // main()
 // ---------------------------------------------------------------------------
@@ -851,6 +1240,37 @@ test("main prints help and returns 0 when --help is passed", async () => {
   assert.equal(result, 0);
 });
 
+test("main prints the config listing and returns 0 for --list", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+  await writeFile(
+    configFile,
+    JSON.stringify({ agents: { searcher: "pi-cli" }, custom: { sys: ["hi"] } }),
+  );
+
+  const originalWrite = process.stdout.write;
+  let output = "";
+  process.stdout.write = (chunk) => {
+    output += chunk;
+    return true;
+  };
+  let result;
+  try {
+    result = withEnv(
+      { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: configFile, NO_COLOR: "" },
+      () => main(["-ls"]),
+    );
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  assert.equal(result, 0);
+  assert.equal(
+    output,
+    `config path: ${configFile}\n\nAgents:\n  searcher: pi-cli\n\nCustom:\n  sys: ["hi"]\n`,
+  );
+});
+
 test("main returns 1 when --save and --import are used together", async () => {
   const agentDir = await fixture();
   const result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
@@ -861,26 +1281,26 @@ test("main returns 1 when --save and --import are used together", async () => {
 
 test("main saves config and returns 0 when --save is used", async () => {
   const agentDir = await fixture();
-  const result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["--path", agentDir, "-e", "pi-intercom", "--save", "myconfig"]),
+  const configFile = join(agentDir, "config.json");
+  const result = withEnv(
+    { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: configFile },
+    () => main(["-e", "pi-intercom", "--save", "myconfig"]),
   );
   assert.equal(result, 0);
-  const settings = JSON.parse(
-    await readFile(join(agentDir, "config.json"), "utf8"),
-  );
-  assert.equal(settings.agents["myconfig"], "pi-cli -e pi-intercom");
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.agents["myconfig"], "pi-cli -e pi-intercom");
 });
 
 test("main saves config with -S shorthand", async () => {
   const agentDir = await fixture();
-  const result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["--path", agentDir, "-s", "playwright-cli", "-S", "my-skill-config"]),
+  const configFile = join(agentDir, "config.json");
+  const result = withEnv(
+    { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: configFile },
+    () => main(["-s", "playwright-cli", "-S", "my-skill-config"]),
   );
   assert.equal(result, 0);
-  const settings = JSON.parse(
-    await readFile(join(agentDir, "config.json"), "utf8"),
-  );
-  assert.equal(settings.agents["my-skill-config"], "pi-cli -s playwright-cli");
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.agents["my-skill-config"], "pi-cli -s playwright-cli");
 });
 
 test("main prints the command and returns 0 on --dry-run", async () => {
@@ -893,27 +1313,22 @@ test("main prints the command and returns 0 on --dry-run", async () => {
 
 test("main imports and merges a saved config", async () => {
   const agentDir = await fixture();
-  withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["--path", agentDir, "-e", "pi-intercom", "--save", "base"]),
-  );
-  const result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["--path", agentDir, "--import", "base", "--dry-run"]),
-  );
+  const configFile = join(agentDir, "config.json");
+  const env = { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: configFile };
+  withEnv(env, () => main(["-e", "pi-intercom", "--save", "base"]));
+  const result = withEnv(env, () => main(["--import", "base", "--dry-run"]));
   assert.equal(result, 0);
 });
 
 test("main round-trips a --custom saved config through --import", async () => {
   const agentDir = await fixture();
-  await writeFile(
-    join(agentDir, "config.json"),
-    JSON.stringify({ custom: { sys: ["hello world"] } }),
-  );
+  const configFile = join(agentDir, "config.json");
+  await writeFile(configFile, JSON.stringify({ custom: { sys: ["hello world"] } }));
+  const env = { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: configFile };
 
-  withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["--path", agentDir, "--custom", "--system-prompt sys[0]", "--save", "reviewer"]),
-  );
-  const settings = JSON.parse(await readFile(join(agentDir, "config.json"), "utf8"));
-  assert.equal(settings.agents.reviewer, "pi-cli --custom '--system-prompt sys[0]'");
+  withEnv(env, () => main(["--custom", "--system-prompt sys[0]", "--save", "reviewer"]));
+  const config = JSON.parse(await readFile(configFile, "utf8"));
+  assert.equal(config.agents.reviewer, "pi-cli --custom '--system-prompt sys[0]'");
 
   const originalWrite = process.stdout.write;
   let output = "";
@@ -923,9 +1338,7 @@ test("main round-trips a --custom saved config through --import", async () => {
   };
   let result;
   try {
-    result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-      main(["--path", agentDir, "--import", "reviewer", "--dry-run"]),
-    );
+    result = withEnv(env, () => main(["--import", "reviewer", "--dry-run"]));
   } finally {
     process.stdout.write = originalWrite;
   }
@@ -952,8 +1365,9 @@ test("main returns 1 when the skill cannot be resolved", async () => {
 
 test("main returns 1 when --import references a missing config", async () => {
   const agentDir = await fixture();
-  const result = withEnv({ PI_AGENT_DIR: agentDir, PI_BIN: "pi" }, () =>
-    main(["--import", "nonexistent"]),
+  const result = withEnv(
+    { PI_AGENT_DIR: agentDir, PI_BIN: "pi", PI_CLI_CONFIG: join(agentDir, "config.json") },
+    () => main(["--import", "nonexistent"]),
   );
   assert.equal(result, 1);
 });
@@ -1041,4 +1455,235 @@ test("resolveSkill on a non-existent agent directory throws not-found", () => {
   assert.throws(() => resolveSkill("anything", "/tmp/does-not-exist-12345"), {
     message: /skill not found: anything/,
   });
+});
+
+// ---------------------------------------------------------------------------
+// Shell aliases (aliases.sh + -aa rc wiring)
+// ---------------------------------------------------------------------------
+
+function captureOutput(): { output: string; errors: string; restore: () => void } {
+  const originalOut = process.stdout.write;
+  const originalErr = process.stderr.write;
+  let output = "";
+  let errors = "";
+  process.stdout.write = (chunk) => {
+    output += chunk;
+    return true;
+  };
+  process.stderr.write = (chunk) => {
+    errors += chunk;
+    return true;
+  };
+  return {
+    get output() {
+      return output;
+    },
+    get errors() {
+      return errors;
+    },
+    restore() {
+      process.stdout.write = originalOut;
+      process.stderr.write = originalErr;
+    },
+  };
+}
+
+test("formatAliases sorts aliases and skips invalid shell names", () => {
+  const { content, skipped } = formatAliases({
+    beta: "pi-cli -i beta",
+    alpha: "pi-cli -i alpha",
+    "bad name": "pi-cli",
+    "2fa": "pi-cli",
+    "a/b": "pi-cli",
+  });
+
+  assert.equal(content.includes("alias alpha='pi-cli -i alpha'"), true);
+  assert.equal(content.includes("alias beta='pi-cli -i beta'"), true);
+  assert.equal(content.indexOf("alpha") < content.indexOf("beta"), true);
+  assert.deepEqual(skipped.sort(), ["2fa", "a/b", "bad name"]);
+});
+
+test("formatAliases emits aliases that shadow shell builtins but reports them", () => {
+  const { content, skipped, shadowed } = formatAliases({
+    test: "pi-cli -e pi-intercom",
+    echo: "pi-cli",
+    worker: "pi-cli -s pi-intercom",
+  });
+
+  assert.equal(content.includes("alias test='pi-cli -i test'"), true);
+  assert.equal(content.includes("alias echo='pi-cli -i echo'"), true);
+  assert.deepEqual(skipped, []);
+  assert.deepEqual(shadowed, ["echo", "test"]);
+});
+
+test("isShellBuiltin distinguishes builtins from ordinary names", () => {
+  assert.equal(isShellBuiltin("test"), true);
+  assert.equal(isShellBuiltin("read"), true);
+  assert.equal(isShellBuiltin("if"), true);
+  assert.equal(isShellBuiltin("worker"), false);
+});
+
+test("formatAliasWarnings explains skipped and builtin-shadowing aliases", () => {
+  const message = formatAliasWarnings(["bad name"], ["test"]);
+  assert.equal(message.includes('skipped alias "bad name"'), true);
+  assert.equal(message.includes('alias "test" shadows a shell builtin'), true);
+  assert.equal(message.includes("non-interactive shells"), true);
+});
+
+test("saveConfig regenerates aliases.sh next to config.json", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+
+  saveConfig("searcher", "pi-cli -e pi-intercom", configFile);
+  saveConfig("reviewer", "pi-cli -s playwright-cli", configFile);
+
+  const aliases = await readFile(aliasesPath(configFile), "utf8");
+  assert.equal(aliases.includes("alias searcher='pi-cli -i searcher'"), true);
+  assert.equal(aliases.includes("alias reviewer='pi-cli -i reviewer'"), true);
+});
+
+test("writeAliases rewrites the file so it stays in sync with the config", async () => {
+  const agentDir = await fixture();
+  const configFile = join(agentDir, "config.json");
+
+  writeAliases({ stale: "pi-cli" }, configFile);
+  writeAliases({ fresh: "pi-cli" }, configFile);
+
+  const aliases = await readFile(aliasesPath(configFile), "utf8");
+  assert.equal(aliases.includes("stale"), false);
+  assert.equal(aliases.includes("alias fresh='pi-cli -i fresh'"), true);
+});
+
+test("detectShell recognizes bash and zsh, including Git Bash's bash.exe", () => {
+  assert.equal(detectShell("/usr/bin/bash"), "bash");
+  assert.equal(detectShell("C:\\Program Files\\Git\\bin\\bash.exe"), "bash");
+  assert.equal(detectShell("/bin/zsh"), "zsh");
+  assert.equal(detectShell("/usr/bin/fish"), undefined);
+  assert.equal(detectShell(undefined), undefined);
+});
+
+test("resolveRcFile honors ZDOTDIR for zsh and uses .bashrc for bash", () => {
+  assert.equal(resolveRcFile("zsh", { ZDOTDIR: "/tmp/zdot" }, "/home/u"), join("/tmp/zdot", ".zshrc"));
+  assert.equal(resolveRcFile("zsh", {}, "/home/u"), join("/home/u", ".zshrc"));
+  assert.equal(resolveRcFile("bash", {}, "/home/u"), join("/home/u", ".bashrc"));
+});
+
+test("buildAliasImport uses $HOME and hasAliasImport detects the marker", () => {
+  const line = buildAliasImport("/home/u/.config/pi-cli/aliases.sh", "/home/u");
+  assert.equal(line.includes('$HOME/.config/pi-cli/aliases.sh'), true);
+  assert.equal(hasAliasImport(line), true);
+  assert.equal(hasAliasImport("export FOO=1\n"), false);
+
+  // Windows drive paths are rewritten to $HOME so Git Bash can source them.
+  const windows = buildAliasImport("C:\\Users\\u\\.config\\pi-cli\\aliases.sh", "C:\\Users\\u");
+  assert.equal(windows.includes("$HOME/.config/pi-cli/aliases.sh"), true);
+  assert.equal(windows.includes("C:/"), false);
+});
+
+test("appendAliasImport keeps existing content and a separating blank line", () => {
+  const block = buildAliasImport("/home/u/.config/pi-cli/aliases.sh", "/home/u");
+  assert.equal(appendAliasImport("", "/home/u/.config/pi-cli/aliases.sh", "/home/u"), `${block}\n`);
+  assert.equal(
+    appendAliasImport("export FOO=1\n", "/home/u/.config/pi-cli/aliases.sh", "/home/u"),
+    `export FOO=1\n\n${block}\n`,
+  );
+});
+
+test("parseArguments recognizes -aa and --add-aliases", () => {
+  assert.equal(parseArguments(["-aa"]).addAliases, true);
+  assert.equal(parseArguments(["--add-aliases"]).addAliases, true);
+  assert.equal(parseArguments([]).addAliases, undefined);
+});
+
+async function aliasFixture() {
+  const home = await mkdtemp(join(tmpdir(), "pi-cli-home-"));
+  const configDirPath = join(home, ".config", "pi-cli");
+  await mkdir(configDirPath, { recursive: true });
+  const configFile = join(configDirPath, "config.json");
+  await writeFile(configFile, JSON.stringify({ agents: { searcher: "pi-cli -e pi-intercom" } }));
+  return { home, configFile, rcPath: join(home, ".bashrc") };
+}
+
+test("runAddAliases writes aliases and appends the import when confirmed", async () => {
+  const { home, configFile, rcPath } = await aliasFixture();
+  await writeFile(rcPath, "export FOO=1\n");
+
+  const capture = captureOutput();
+  let question = "";
+  try {
+    const code = await runAddAliases(configFile, {
+      env: { SHELL: "/bin/bash" },
+      home,
+      confirm: async (q) => {
+        question = q;
+        return true;
+      },
+    });
+    assert.equal(code, 0);
+  } finally {
+    capture.restore();
+  }
+
+  assert.match(question, /add to/);
+  assert.match(capture.output, /updated/);
+  const aliases = await readFile(aliasesPath(configFile), "utf8");
+  assert.equal(aliases.includes("alias searcher='pi-cli -i searcher'"), true);
+  const rc = await readFile(rcPath, "utf8");
+  assert.equal(hasAliasImport(rc), true);
+  assert.match(rc, /\$HOME\/\.config\/pi-cli\/aliases\.sh/);
+  assert.equal(rc.startsWith("export FOO=1\n"), true);
+});
+
+test("runAddAliases is idempotent once the rc file imports the aliases", async () => {
+  const { home, configFile, rcPath } = await aliasFixture();
+  await writeFile(rcPath, "export FOO=1\n");
+  const env = { SHELL: "/bin/bash" };
+
+  const first = captureOutput();
+  try {
+    await runAddAliases(configFile, { env, home, confirm: async () => true });
+  } finally {
+    first.restore();
+  }
+  const afterFirst = await readFile(rcPath, "utf8");
+
+  const second = captureOutput();
+  let confirmCalls = 0;
+  try {
+    const code = await runAddAliases(configFile, {
+      env,
+      home,
+      confirm: async () => {
+        confirmCalls += 1;
+        return true;
+      },
+    });
+    assert.equal(code, 0);
+  } finally {
+    second.restore();
+  }
+
+  assert.equal(confirmCalls, 0);
+  assert.match(second.output, /already imported/);
+  assert.equal(await readFile(rcPath, "utf8"), afterFirst);
+});
+
+test("runAddAliases leaves the rc file unchanged when declined", async () => {
+  const { home, configFile, rcPath } = await aliasFixture();
+  await writeFile(rcPath, "export FOO=1\n");
+
+  const capture = captureOutput();
+  try {
+    const code = await runAddAliases(configFile, {
+      env: { SHELL: "/bin/bash" },
+      home,
+      confirm: async () => false,
+    });
+    assert.equal(code, 0);
+  } finally {
+    capture.restore();
+  }
+
+  assert.equal(await readFile(rcPath, "utf8"), "export FOO=1\n");
+  assert.equal(hasAliasImport(await readFile(rcPath, "utf8")), false);
 });

@@ -11,8 +11,11 @@ A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary 
 - `-bt` / `--built-in-tools` to keep only chosen built-in tools while leaving extension tools enabled
 - `-n` flag to kill ALL external context sources and tools
 - `-S` and `--import` options for saving and loading pi-cli startup options
-- `-p` / `--path` to switch to a separate saved-config directory
-- `-cu` / `--custom` to expand user-defined config fixtures into arguments
+- `-ls` / `--list` to print saved agents and custom fixtures from config.json
+- `-aa` / `--add-aliases` to generate shell aliases for saved agents and wire them into your rc file
+- `-cu` / `--custom` to expand user-defined `custom` fixtures from pi-cli's config into arguments
+- `-p` / `--path` to use and remember another config directory
+- `--config` to create the default config file
 
 ```bash
 pi-cli -e pi-intercom
@@ -117,7 +120,7 @@ Unlike `-t` / `--tools` (which Pi applies as a strict allowlist across built-in,
 extension, and custom tools, thereby disabling extension tools), `-bt` only
 filters built-ins. Note that Pi enables only `read`, `bash`, `edit`, and `write`
 by default; `grep`, `find`, and `ls` must be enabled first via the `defaultTools`
-setting, otherwise `-bt` cannot keep them active:
+setting in Pi's `settings.json`, otherwise `-bt` cannot keep them active:
 
 ```json
 { "defaultTools": ["read", "bash", "edit", "write", "grep", "find", "ls"] }
@@ -137,13 +140,21 @@ pi-cli -n -e pi-intercom
 Set `PI_BIN` to use a different Pi executable. Paths with spaces work on
 Windows too (`C:\Program Files\...\pi.cmd`).
 
+pi-cli stores its own config at `~/.config/pi-cli/config.json` (honoring
+`$XDG_CONFIG_HOME`, or `$PI_CLI_CONFIG_DIR`). Set `PI_CLI_CONFIG` to point at a
+different file. Use `-p` / `--path <directory>` to switch to another config
+directory: pi-cli records it under the top-level `path` key in the default
+config and uses it for later commands. `--config` creates the default
+`config.json` if it does not exist.
+
 ## Custom fixtures (`--custom`)
 
-The config file's `custom` key holds arbitrary JSON values — strings, arrays, or nested objects
-— that you can reference from the command line or from saved configs. `-cu` /
-`--custom` takes a small argument list in which any token may be an access path
-into `custom`; each such token is replaced by the referenced value. It is
-read from the active pi-cli config file:
+pi-cli's own config lives at `~/.config/pi-cli/config.json` (independent of
+Pi's `settings.json`). Its top-level `custom` key holds arbitrary JSON values —
+strings, arrays, or nested objects — that you can reference from the command
+line or from saved configs. `-cu` / `--custom` takes a small argument list in
+which any token may be an access path into `custom`; each such token is replaced
+by the referenced value.
 
 ```json
 {
@@ -152,6 +163,7 @@ read from the active pi-cli config file:
       "You are a reviewer agent. Delegate edits to a worker via pi-intercom."
     ],
     "ext_list": ["pi-intercom", "rtk", "todo"],
+    "extension_lists": ["pi-parse-commands,pi-intercom", "pi-herdr,pi-mcp-adapter"],
     "cheap_model": ["--model", "google/gemini"]
   }
 }
@@ -172,6 +184,14 @@ references are allowed in one expression. Tokens that do not resolve are passed
 through literally, and an expression that resolves nothing throws
 `custom fixture not found`.
 
+Several references can be concatenated with commas inside one token, which is
+handy for flags that take a comma-separated list such as `-e`. Each part is
+resolved and the values are joined back together with commas (arrays flatten
+the same way), so `--custom '-e extension_lists[0],extension_lists[1]'` becomes
+one `-e pi-parse-commands,pi-intercom,pi-herdr,pi-mcp-adapter`. If only some of
+a token's comma-joined parts resolve, pi-cli throws `custom fixture not found`
+for the first missing one.
+
 Expansion happens in the parser, not as plain text substitution: once the
 fixture values are spliced in, the result is parsed exactly as if you had typed
 those tokens on the command line. pi-cli flags inside a `--custom` expression
@@ -191,7 +211,8 @@ every other flag and with saved configs:
 
 ## Save named configurations
 
-Save named configurations and load them back:
+Save named configurations in pi-cli's own config file at
+`~/.config/pi-cli/config.json` (independent of Pi's `settings.json`):
 
 ```bash
 pi-cli --save searcher -e pi-intercom -s playwright-cli
@@ -201,41 +222,83 @@ pi-cli --import searcher
 # -i searcher is an alias for --import searcher
 ```
 
-When imported, the stored command is re-parsed from scratch, so extension and
-skill names are resolved again. Import searches exact names first, then unique
-partial matches (case-insensitive).
-
-### Where configs are stored
-
-pi-cli uses one JSON file by default: `~/.config/pi-cli/config.json`. Set
-`PI_CLI_CONFIG_DIR` to change that default location (useful for tests or a
-throwaway config). It never reads or writes Pi's `settings.json`, and it does
-not store configuration under Pi's extension directory. The file contains saved
-command strings and optional custom fixtures:
+Configurations are stored as plain command strings under the top-level `agents`
+key in config.json, so you can edit them by hand. The top-level `custom` key is
+reserved for custom fixtures, and unknown keys are preserved on save.
 
 ```json
 {
   "agents": {
-    "searcher": "pi-cli -e pi-intercom -s playwright-cli"
-  },
-  "custom": {}
+    "searcher": "pi-cli -e pi-intercom -s playwright-cli",
+    "quick": "pi-cli --model google/gemini"
+  }
 }
 ```
 
-To use a separate config directory, pass `-p` / `--path`. The choice is saved
-in the default file as a `path` entry, which remains the source of truth:
+When imported, the stored command is re-parsed from scratch, so extension and
+skill names are resolved again. Import searches exact names first, then unique
+partial matches (case-insensitive).
+
+## List saved configs and fixtures
+
+`-ls` / `--list` prints the path of pi-cli's config file followed by each saved
+agent with its command and each top-level `custom` fixture with its JSON value,
+then exits without running pi. Only the agent names and fixture keys are colored
+yellow in a terminal; values stay plain, and output is uncolored when piped or
+when `NO_COLOR` is set.
 
 ```bash
-pi-cli --path ~/work/pi-config --save work -e pi-intercom
-pi-cli --path ~/work/pi-config --import work
-# Future commands use ~/work/pi-config automatically.
+pi-cli --list
 ```
 
-After saving, pi-cli prints the destination and the `--path` command needed to
-switch directories. Use `--config` only when you want to create the default
-file ahead of time. Loading a config that does not exist (or a `path` that
-points at a missing file) fails with `config file not found: <path>` instead of
-silently creating anything.
+```text
+config path: /home/you/.config/pi-cli/config.json
+
+Agents:
+  searcher: pi-cli -e pi-intercom -s playwright-cli
+  quick: pi-cli --model google/gemini
+
+Custom:
+  sys_prompts: ["You are a reviewer agent."]
+  cheap_model: ["--model","google/gemini"]
+```
+
+## Shell aliases
+
+Every saved agent also gets a shell alias, written to
+`~/.config/pi-cli/aliases.sh` (next to `config.json`, so `$XDG_CONFIG_HOME` and
+`$PI_CLI_CONFIG` move it too). The file is regenerated on every `--save`, so it
+stays in sync with the `agents` map; the config remains the source of truth and
+the alias file should not be edited by hand.
+
+```bash
+alias searcher='pi-cli -i searcher'
+alias quick='pi-cli -i quick'
+```
+
+Run `-aa` / `--add-aliases` to generate the file, then be prompted to add a
+single import line to your rc file (`.bashrc`, or `.zshrc` honoring
+`$ZDOTDIR`). The shell is detected from `$SHELL`; the line is added only once,
+guarded by a marker comment, and is skipped if the rc file already imports the
+aliases.
+
+```bash
+pi-cli --add-aliases
+```
+
+```sh
+# pi-cli aliases
+[ -f "$HOME/.config/pi-cli/aliases.sh" ] && . "$HOME/.config/pi-cli/aliases.sh"
+```
+
+Names that are not valid shell alias identifiers (spaces, quotes, a leading
+digit, ...) are skipped with a warning and omitted from the alias file. Names
+that shadow a shell builtin or reserved word (`test`, `echo`, `read`, `source`,
+...) are still written, because they work in an interactive shell, but `--save`
+and `--add-aliases` warn that bash ignores them in non-interactive shells (where
+`expand_aliases` is off), so the builtin runs instead - often silently. In a
+non-interactive shell `--add-aliases` prints the import line instead of editing
+anything.
 
 ## Project structure
 
@@ -243,12 +306,14 @@ silently creating anything.
 index.ts            Bin entry point (delegates to src/, re-exports the public API)
 src/
   index.ts          Barrel re-export of the public API
-  constants.ts      Shared constants (agent and config directories)
+  constants.ts      Shared constants (agent dir, config filename, extensions)
   cli/
     main.ts         main() orchestration and child process spawning
-    arguments.ts    CLI argument parsing, Pi argument building
+    arguments.ts    CLI argument parsing, Pi argument building, shell quoting
     options.ts      Option table and matching
-    config-cmd.ts   --config init mode
+    list.ts         --list output for saved agents and custom fixtures
+    add-aliases.ts  -aa shell detection, rc import, interactive prompt
+    config-cmd.ts   --config default config initializer
     custom.ts       --custom expansion into arguments
     help.ts         pi-cli --help output
     pi-help-msg.ts  pi --helpi output
@@ -259,9 +324,9 @@ src/
     extensions.ts   Extension name resolution
     skills.ts       Skill name resolution
   config/
-    file.ts         Default JSON config path and parsing
-    io.ts           Atomic, permissioned file writes
-    config.ts       Config path selection + saved configs + custom fixtures
+    config-file.ts  Low-level ~/.config/pi-cli/config.json read/write
+    config.ts       Saved pi-cli configurations + custom fixtures
+    aliases.ts      aliases.sh generation from saved agents
 dist/               Compiled JavaScript published to npm (generated, gitignored)
 ```
 
