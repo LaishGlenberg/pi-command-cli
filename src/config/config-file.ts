@@ -58,11 +58,19 @@ export function readConfigFile(configFilePath?: string): ConfigFile {
   return config as ConfigFile;
 }
 
-export function writeConfigFile(config: ConfigFile, configFilePath?: string): void {
-  const path = configFilePath || configPath();
+/**
+ * Write a file atomically (temp file + rename) with owner-only permissions,
+ * creating parent directories as needed. Shared by the config and alias files.
+ */
+export function writeFileAtomic(path: string, content: string, mode = 0o600): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(temporary, content, { mode });
   renameSync(temporary, path);
-  chmodSync(path, 0o600);
+  chmodSync(path, mode);
+}
+
+export function writeConfigFile(config: ConfigFile, configFilePath?: string): void {
+  const path = configFilePath || configPath();
+  writeFileAtomic(path, `${JSON.stringify(config, null, 2)}\n`);
 }
