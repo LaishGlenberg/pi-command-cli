@@ -1,6 +1,6 @@
 export function printHelp(): void {
   process.stdout.write(`Usage: pi-cli [options] [pi-options/messages...]\n\n`);
-  process.stdout.write(`If you aliased pi-cli as pi and need pi help, run: pi --helpi\n\n`);
+  process.stdout.write(`If you aliased pi-cli under pi you can bypass the alias with '\pi --help' or 'command pi --help'\n\n`);
   process.stdout.write(`Runs pi with explicit resources and passes normal Pi arguments through.\n`);
   process.stdout.write(`It adds -ne when extensions are named and -ns when skills are named.\n`);
   process.stdout.write(`With no resources named it is equivalent to running pi directly.\n\n`);

@@ -316,7 +316,6 @@ src/
     config-cmd.ts   --config default config initializer
     custom.ts       --custom expansion into arguments
     help.ts         pi-cli --help output
-    pi-help-msg.ts  pi --helpi output
   resolve/
     walk.ts         Safe recursive directory walker
     packages.ts     package.json reading and extension-directory detection
@@ -341,7 +340,7 @@ cmd command line.
 
 ## Pi alias
 
-I recommend aliasing pi-cli under pi, use `pi --helpi` to access pi's --help message
+I recommend aliasing pi-cli under pi. To run pi itself (bypassing the alias), use the shell's `command` builtin or a backslash prefix: `command pi --help` or `\pi --help`.
 
 Git Bash / bash:
 

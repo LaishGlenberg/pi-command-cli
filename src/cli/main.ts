@@ -16,7 +16,6 @@ import { setConfigPath } from "../config/config-file.ts";
 import { runConfigCommand } from "./config-cmd.ts";
 import { printHelp } from "./help.ts";
 import { printConfigListing } from "./list.ts";
-import { printHelpi } from "./pi-help-msg.ts";
 
 // Re-exported for callers importing it from `cli/main.ts`; the implementation
 // lives in `arguments.ts` alongside its inverse `shellSplit`.
@@ -86,11 +85,6 @@ export function main(argv: string[] = process.argv.slice(2)): number | undefined
     parsed = parseArguments(argv, () => loadCustomFixtures(requestedPath));
     if (parsed.help) {
       printHelp();
-      return 0;
-    }
-
-    if (parsed.helpi) {
-      printHelpi();
       return 0;
     }
 

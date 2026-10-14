@@ -2,7 +2,6 @@ import { BUILTIN_TOOLS, isBuiltinTool, type BuiltinTool } from "../constants.ts"
 
 export type OptionKey =
   | "help"
-  | "helpi"
   | "list"
   | "addAliases"
   | "config"
@@ -36,7 +35,6 @@ interface ValueOption {
 // does not match is forwarded to pi untouched.
 const FLAG_OPTIONS: readonly { key: OptionKey; flags: readonly string[] }[] = [
   { key: "help", flags: ["-h", "--help"] },
-  { key: "helpi", flags: ["-hp", "--helpi"] },
   { key: "list", flags: ["-ls", "--list"] },
   { key: "addAliases", flags: ["-aa", "--add-aliases"] },
   { key: "config", flags: ["--config"] },

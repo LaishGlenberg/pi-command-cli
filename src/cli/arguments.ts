@@ -20,7 +20,6 @@ export interface ParsedArguments {
   configMode: boolean;
   configPath?: string | undefined;
   help?: boolean | undefined;
-  helpi?: boolean | undefined;
   list?: boolean | undefined;
   addAliases?: boolean | undefined;
 }
@@ -230,7 +229,6 @@ export function parseArguments(
     };
 
     if (key === "help") return snapshot({ help: true });
-    if (key === "helpi") return snapshot({ helpi: true });
     if (key === "list") return snapshot({ list: true });
     if (key === "addAliases") return snapshot({ addAliases: true });
 
