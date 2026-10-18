@@ -45,6 +45,12 @@ Entry flow: `index.ts` -> `src/cli/main.ts#main` -> `src/cli/arguments.ts`.
 explicit `-ne -ns -nc -np` with `useDefaults = false`. Do not add `-nbt` or other
 tool flags here.
 
+**Built-in extensions** - `-e builtin:<name>` (`builtin:mcp`, `builtin:codemode`,
+`builtin:tool-search`, `builtin:llama.cpp`) is returned verbatim by
+`resolveExtension` instead of searched, since these extensions have no file and
+pi-cli's `-ne` would otherwise drop them. An empty `builtin:` throws. Anything
+else, including unknown `builtin:` names, is left to Pi to validate.
+
 **`-bt`/`--built-in-tools`** keeps only the named built-ins by emitting
 `--exclude-tools <BUILTIN_TOOLS minus allowlist>`. Never use `--tools`/`-t`
 (strict allowlist across built-in/extension/custom tools; would disable the

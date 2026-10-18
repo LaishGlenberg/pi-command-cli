@@ -70,4 +70,10 @@ export function isBuiltinTool(value: string): value is BuiltinTool {
   return (BUILTIN_TOOLS as readonly string[]).includes(value);
 }
 
+// Pi ships some tools (for example `codemode`) inside built-in extensions that
+// have no file on disk and are named `builtin:<name>`. `-ne` disables those too,
+// so pi-cli passes the name through untouched and lets `-e builtin:<name>`
+// re-enable the one you asked for.
+export const BUILTIN_EXTENSION_PREFIX = "builtin:";
+
 export const SKIPPED_DIRECTORIES: ReadonlySet<string> = new Set(["node_modules", ".git"]);

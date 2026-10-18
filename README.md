@@ -8,6 +8,7 @@
 A QoL wrapper around the 'pi' command for starting the pi coding agent. Primary feature is extension and skill name resolution, you no longer need to refer to them with absolute paths. Contains a lot of helpful abstractions such as:
 
 - Automatically call `-ne` when using `-e` (same applies to `-s` with `-ns`)
+- `-e builtin:<name>` to keep Pi's built-in extensions (for example `builtin:codemode`) loaded alongside your own
 - `-bt` / `--built-in-tools` to keep only chosen built-in tools while leaving extension tools enabled
 - `-n` flag to kill ALL external context sources and tools
 - `-S` and `--import` options for saving and loading pi-cli startup options
@@ -98,6 +99,26 @@ pi -ns --skill "$HOME/.pi/agent/skills/playwright-cli.md"
 ```
 
 `pi-cli -s pi-intercom` resolves the skill directory shipped by the extension.
+
+### Built-in extensions (`builtin:`)
+
+Because `-e` adds `-ne`, it also turns off Pi's built-in extensions, which ship
+tools like `codemode` and `tool_search`. Those extensions have no file on disk
+and are named `builtin:<name>`; pass one to `-e` and pi-cli forwards it
+verbatim so it stays loaded:
+
+```bash
+pi-cli -e pi-intercom,builtin:codemode
+# equivalent to:
+pi -ne --extension "$HOME/.pi/agent/npm/node_modules/pi-intercom" \
+  --extension builtin:codemode
+```
+
+The built-in extensions are `builtin:mcp`, `builtin:codemode`,
+`builtin:tool-search`, and `builtin:llama.cpp`. This matters when a tool you rely
+on is registered by a built-in extension: `defaultTools: ["+codemode"]` in Pi's
+`settings.json` can only activate `codemode` if `builtin:codemode` loads, and
+`-e` without it suppresses that extension.
 
 ## Built-in tools
 
