@@ -177,6 +177,20 @@ test("returns an explicit path unchanged when it exists", async () => {
   assert.equal(resolveExtension(explicitPath, agentDir), explicitPath);
 });
 
+test("passes built-in extension names through unchanged", async () => {
+  const agentDir = await fixture();
+  for (const name of ["builtin:codemode", "builtin:mcp", "builtin:tool-search"]) {
+    assert.equal(resolveExtension(name, agentDir), name);
+  }
+});
+
+test("throws when a builtin: extension name is missing", async () => {
+  const agentDir = await fixture();
+  assert.throws(() => resolveExtension("builtin:", agentDir), {
+    message: /--extension requires a name after builtin:/,
+  });
+});
+
 test("throws when the extension name is empty", async () => {
   const agentDir = await fixture();
   assert.throws(() => resolveExtension("", agentDir), {
@@ -296,6 +310,16 @@ test("splits comma-separated extensions", async () => {
     "-ne",
     "--extension", join(agentDir, "npm", "node_modules", "pi-intercom"),
     "--extension", join(agentDir, "extensions", "local-extension"),
+  ]);
+});
+
+test("mixes resolved extensions and built-in extension names in one list", async () => {
+  const agentDir = await fixture();
+  const parsed = parseArguments(["-e", "pi-intercom,builtin:codemode"]);
+  assert.deepEqual(buildPiArguments(parsed, agentDir), [
+    "-ne",
+    "--extension", join(agentDir, "npm", "node_modules", "pi-intercom"),
+    "--extension", "builtin:codemode",
   ]);
 });
 
@@ -624,6 +648,20 @@ test("buildPiArguments adds only -ne when an extension is present but no skill",
     hasExtension: true,
   });
   assert.deepEqual(buildPiArguments(parsed, agentDir), ["-ne", "--extension", extPath]);
+});
+
+test("buildPiArguments keeps built-in extensions alive alongside -ne", async () => {
+  const agentDir = await fixture();
+  const extPath = join(agentDir, "extensions", "local-extension");
+  const parsed = parsedArgs({
+    piArguments: ["--extension", extPath, "--extension", "builtin:codemode"],
+    hasExtension: true,
+  });
+  assert.deepEqual(buildPiArguments(parsed, agentDir), [
+    "-ne",
+    "--extension", extPath,
+    "--extension", "builtin:codemode",
+  ]);
 });
 
 test("buildPiArguments adds no discovery flags when no resources are named", () => {

@@ -5,7 +5,7 @@ export function printHelp(): void {
   process.stdout.write(`It adds -ne when extensions are named and -ns when skills are named.\n`);
   process.stdout.write(`With no resources named it is equivalent to running pi directly.\n\n`);
   process.stdout.write(`Options:\n`);
-  process.stdout.write(`  -e, --extension <name|path>  Load an extension (repeatable)\n`);
+  process.stdout.write(`  -e, --extension <name|path|builtin:name>  Load an extension (repeatable)\n`);
   process.stdout.write(`  -s, --skill <name|path>      Load a skill (repeatable)\n`);
   process.stdout.write(`  -bt, --built-in-tools <tools>   Keep only these built-in tools (comma-separated)\n`);
   process.stdout.write(`  -cu, --custom <args>         Expand config.json custom refs, then parse as flags\n`);
@@ -26,4 +26,5 @@ export function printHelp(): void {
   process.stdout.write(`  $PI_AGENT_DIR/npm/node_modules (or ~/.pi/agent)\n`);
   process.stdout.write(`  $PI_AGENT_DIR/git\n`);
   process.stdout.write(`  $PI_AGENT_DIR/extensions\n`);
+  process.stdout.write(`Built-in extension names (builtin:codemode, builtin:mcp, ...) are passed through as-is.\n`);
 }

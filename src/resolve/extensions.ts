@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { DEFAULT_AGENT_DIR } from "../constants.ts";
+import { BUILTIN_EXTENSION_PREFIX, DEFAULT_AGENT_DIR } from "../constants.ts";
 import { addMatch, sourceNameMatches } from "./matching.ts";
 import {
   isPiPackage,
@@ -22,6 +22,10 @@ interface SearchRoot {
  * Search order is npm packages, git checkouts, then local extensions. Package
  * metadata is used for scoped packages and repositories whose folder name is
  * different from their package name.
+ *
+ * Built-in extension names (`builtin:codemode`, `builtin:mcp`, ...) are not
+ * files, so they are returned verbatim for Pi to load; naming one keeps it
+ * alive even though pi-cli also adds `-ne`.
  */
 export function resolveExtension(
   requested: string,
@@ -29,6 +33,17 @@ export function resolveExtension(
 ): string {
   if (!requested) {
     throw new Error("--extension requires an extension name or path");
+  }
+
+  if (requested.startsWith(BUILTIN_EXTENSION_PREFIX)) {
+    const name = requested.slice(BUILTIN_EXTENSION_PREFIX.length).trim();
+    if (!name) {
+      throw new Error(
+        `--extension requires a name after ${BUILTIN_EXTENSION_PREFIX} ` +
+          `(for example ${BUILTIN_EXTENSION_PREFIX}codemode)`,
+      );
+    }
+    return requested;
   }
 
   // Explicit paths remain valid, including paths outside ~/.pi/agent.
